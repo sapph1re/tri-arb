@@ -39,6 +39,12 @@ class BinanceOrderBook(QObject):
     def get_symbol(self) -> str:
         return self.__symbol
 
+    def get_bids(self) -> list:
+        return self.__sorted_copy(self.__bids)[::-1]
+
+    def get_asks(self) -> list:
+        return self.__sorted_copy(self.__asks)
+
     def init_order_book(self):
         snapshot = self.__api.depth(symbol=self.__symbol, limit='1000')
         if self.__parse_snapshot(snapshot):
@@ -88,8 +94,8 @@ class BinanceOrderBook(QObject):
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
             self.ob_updated.emit(self.__symbol,
-                                 self.__sorted_copy(self.__bids),
-                                 self.__sorted_copy(self.__asks))
+                                 self.get_bids(),
+                                 self.get_asks())
         elif self.__lastUpdateId < from_id:
             print('OB > Update: Snapshot is too OLD ### Current Id: {} ### {} > {}'
                   .format(self.__lastUpdateId, from_id, to_id))
@@ -176,7 +182,7 @@ class BinanceDepthWebsocket:
 class TestUpdateReceiver(QObject):
 
     def update_reciever(self, symbol: str, bids: list, asks: list):
-        print('UR > Update signal is received! ### {} <> {} <> {}'.format(symbol, bids[-1], asks[0]))
+        print('UR > Update signal is received! ### {} <> {} <> {}'.format(symbol, bids[0], asks[0]))
 
 
 if __name__ == '__main__':
