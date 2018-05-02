@@ -130,7 +130,10 @@ class BinanceDepthWebsocket:
     def __init__(self, order_book: BinanceOrderBook):
         # websocket.enableTrace(True)
         self.__order_book = order_book
-        self.__ws = websocket.WebSocketApp("wss://stream.binance.com:9443/ws/bnbbtc@depth",
+        self.__symbol = order_book.get_symbol()
+
+        wss_url = 'wss://stream.binance.com:9443/ws/' + self.__symbol.lower() + '@depth'
+        self.__ws = websocket.WebSocketApp(wss_url,
                                            on_message=self.__on_message,
                                            on_error=self.__on_error,
                                            on_close=self.__on_close,
@@ -178,7 +181,7 @@ class TestUpdateReceiver(QObject):
 
 if __name__ == '__main__':
     bapi = BinanceApi(API_KEY, API_SECRET)
-    symbol = 'bnbbtc'
+    symbol = 'ltceth'
     ob = BinanceOrderBook(bapi, symbol)
     ws = BinanceDepthWebsocket(ob)
     ur = TestUpdateReceiver()
