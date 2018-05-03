@@ -18,8 +18,17 @@ logger = StyleAdapter(logger)
 
 fee = Decimal('0.0005')
 pairs = ['ethbtc', 'eosbtc', 'eoseth']
+triangle = {
+	'yz': pairs[0],
+	'xz': pairs[1],
+	'xy': pairs[2]
+}
 bapi = BinanceApi(API_KEY, API_SECRET)
 orderbooks = {}
+
+
+def pair_pretty(pair):
+	return '{}/{}'.format(pair[:3].upper(), pair[3:].upper())
 
 
 def on_orderbook_updated(symbol: str, bids: list, asks: list):
@@ -28,25 +37,28 @@ def on_orderbook_updated(symbol: str, bids: list, asks: list):
 		return
 	# getting best bids/asks
 	try:
-		ethbtc_bid = Decimal(orderbooks['ethbtc'].get_bids()[0][0])
-		ethbtc_ask = Decimal(orderbooks['ethbtc'].get_asks()[0][0])
-		eosbtc_bid = Decimal(orderbooks['eosbtc'].get_bids()[0][0])
-		eosbtc_ask = Decimal(orderbooks['eosbtc'].get_asks()[0][0])
-		eoseth_bid = Decimal(orderbooks['eoseth'].get_bids()[0][0])
-		eoseth_ask = Decimal(orderbooks['eoseth'].get_asks()[0][0])
+		yz_bid = orderbooks[triangle['yz']].get_bids()[0][0]
+		yz_ask = orderbooks[triangle['yz']].get_asks()[0][0]
+		xz_bid = orderbooks[triangle['xz']].get_bids()[0][0]
+		xz_ask = orderbooks[triangle['xz']].get_asks()[0][0]
+		xy_bid = orderbooks[triangle['xy']].get_bids()[0][0]
+		xy_ask = orderbooks[triangle['xy']].get_asks()[0][0]
 	except IndexError:
+		logger.debug('Orderbooks are not ready yet')
 		return
-	# checking triangle in one direction: sell ETH/BTC -> buy EOS/BTC -> sell EOS/ETH
-	profit = ethbtc_bid / eosbtc_ask * eoseth_bid * (1 - fee)**3 - 1
+	# checking triangle in one direction: sell Y/Z -> buy X/Z -> sell X/Y
+	profit = yz_bid / xz_ask * xy_bid * (1 - fee)**3 - 1
 	if profit > 0:
-		logger.info('Arbitrage Found: sell ETH/BTC @ {} -> buy EOS/BTC @ {} -> sell EOS/ETH @ {}. Profit: {}%',
-					ethbtc_bid, eosbtc_ask, eoseth_bid, profit*100)
+		logger.info('Arbitrage Found: sell {} @ {} -> buy {} @ {} -> sell {} @ {}. Profit: {}%',
+					pair_pretty(triangle['yz']), pair_pretty(triangle['xz']), pair_pretty(triangle['xy']),
+					yz_bid, xz_ask, xy_bid, profit * 100)
 		return
-	# checking triangle in another direction: buy EOS/ETH -> sell EOS/BTC -> buy ETH/BTC
-	profit = eosbtc_bid / eoseth_ask * ethbtc_ask * (1 - fee)**3 - 1
+	# checking triangle in one direction: buy X/Y -> sell X/Z -> buy Y/Z
+	profit = xz_bid / xy_ask * yz_ask * (1 - fee)**3 - 1
 	if profit > 0:
-		logger.info('Arbitrage Found: buy EOS/ETH @ {} -> sell EOS/BTC @ {} -> buy ETH/BTC @ {}. Profit: {}%',
-					eoseth_ask, eosbtc_bid, ethbtc_ask, profit*100)
+		logger.info('Arbitrage Found: buy {} @ {} -> sell {} @ {} -> buy {} @ {}. Profit: {}%',
+					pair_pretty(triangle['xy']), pair_pretty(triangle['xz']), pair_pretty(triangle['yz']),
+					xy_ask, xz_bid, yz_ask, profit * 100)
 		return
 	logger.debug('No arbitrage found')
 
