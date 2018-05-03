@@ -5,11 +5,13 @@ import json
 import threading
 import gevent
 import time
+from decimal import *
 
 from PyQt5.QtCore import QCoreApplication, QObject, pyqtSignal
 
 from binance_api import BinanceApi
 from config import API_KEY, API_SECRET
+
 
 def is_str_zero(value):
     try:
@@ -18,7 +20,7 @@ def is_str_zero(value):
             return True
         else:
             return False
-    except:
+    except ValueError:
         return False
 
 
@@ -107,7 +109,11 @@ class BinanceOrderBook(QObject):
 
     def __sorted_copy(self, dictionary: dict):
         dct = dictionary.copy()
-        return [(key, dct[key]) for key in sorted(dct.keys())]
+        try:
+            res = [(Decimal(key), Decimal(dct[key])) for key in sorted(dct.keys())]
+        except ValueError:
+            return None
+        return res
 
     def save_to(self, filename):
         bids = self.__sorted_copy(self.__bids)
