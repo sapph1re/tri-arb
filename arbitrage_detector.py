@@ -3,7 +3,7 @@ from decimal import Decimal
 from config import API_KEY, API_SECRET
 from binance_api import BinanceApi
 from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
-from PyQt5.QtCore import QCoreApplication, pyqtSignal
+from PyQt5.QtCore import QCoreApplication, QObject, pyqtSignal
 import logging
 from custom_logging import GracefulFormatter, StyleAdapter
 logger = logging.getLogger()
@@ -39,7 +39,7 @@ class Money:
 
 class MarketAction:
 	def __init__(self, pair: str, action: str, price: Decimal, amount: Decimal):
-		self.pair = pair,
+		self.pair = pair
 		self.action = action
 		self.price = price
 		self.amount = amount
@@ -60,13 +60,14 @@ class Arbitrage:
 
 	def __str__(self):
 		actions_str = ' -> '.join([str(action) for action in self.actions])
-		logger.info('{}, profit: {} ({}%)', actions_str, self.profit_abs, self.profit_rel * 100)
+		return '{}, profit: {} ({}%)'.format(actions_str, self.profit_abs, self.profit_rel * 100)
 
 
-class ArbitrageDetector:
+class ArbitrageDetector(QObject):
 	arbitrage_detected = pyqtSignal(Arbitrage)
 
 	def __init__(self, pairs, fee):
+		super(ArbitrageDetector, self).__init__()
 		self.fee = fee
 		self.pairs = pairs
 		self.orderbooks = {}
