@@ -13,28 +13,24 @@ from binance_api import BinanceApi
 from config import API_KEY, API_SECRET
 
 
-def is_str_zero(value):
-    try:
-        value = float(value)
-        if value == 0:
-            return True
-        else:
-            return False
-    except ValueError:
-        return False
-
-
 class BinanceOrderBook(QObject):
 
-    def __init__(self, api: BinanceApi, symbol: str):
+    def __init__(self, api: BinanceApi, symbol: str,
+                 start_websocket: bool = False, reinit_timeout: int = 600):
         super().__init__()
+
         self.__api = api
         self.__symbol = symbol.upper()
+
         self.__lastUpdateId = 0
         self.__bids = {}
         self.__asks = {}
         self.__start_time = time.time()
-        self.__timeout = 600  # in seconds
+        self.__timeout = reinit_timeout  # in seconds
+
+        self.__websocket = None
+        if start_websocket:
+            self.start_websocket()
 
     ob_updated = pyqtSignal(str, list, list)
 
@@ -47,41 +43,40 @@ class BinanceOrderBook(QObject):
     def get_asks(self) -> list:
         return self.__sorted_copy(self.__asks)
 
+    def get_websocket(self):
+        return self.__websocket
+
+    def start_websocket(self):
+        if self.__websocket:
+            self.__websocket.stop()
+        else:
+            self.__websocket = BinanceDepthWebsocket(self)
+        self.__websocket.start()
+
+    def stop_websocket(self):
+        self.__websocket.stop()
+
+    def save_to(self, filename):
+        bids = self.__sorted_copy(self.__bids)
+        asks = self.__sorted_copy(self.__asks)
+        data = {'lastUpdateId': self.__lastUpdateId,
+                'bids': bids,
+                'asks': asks}
+        with open(filename, 'w') as fp:
+            json.dump(data, fp, indent=2, ensure_ascii=False)
+
     def init_order_book(self):
-        snapshot = self.__api.depth(symbol=self.__symbol, limit='1000')
+        snapshot = self.__api.depth(symbol=self.__symbol, limit=1000)
         if self.__parse_snapshot(snapshot):
             print('OB > Initialized OB')
+            self.ob_updated.emit(self.__symbol,
+                                 self.get_bids(),
+                                 self.get_asks())
             self.__start_time = time.time()
         else:
             print('OB > OB initialization FAILED! Retrying...')
             gevent.sleep(1)
             self.init_order_book()
-
-    def __parse_snapshot(self, snapshot):
-        try:
-            self.__lastUpdateId = snapshot['lastUpdateId']
-            self.__update_bids(snapshot['bids'])
-            self.__update_asks(snapshot['asks'])
-        except LookupError:
-            print('OB > Parse Snapshot ERROR')
-            return False
-        return True
-
-    def __update_bids(self, bids_list):
-        for each in bids_list:
-            zero_flag = is_str_zero(each[1])
-            if zero_flag and (each[0] in self.__bids):
-                self.__bids.pop(each[0])
-            elif not zero_flag:
-                self.__bids[each[0]] = each[1]
-
-    def __update_asks(self, asks_list):
-        for each in asks_list:
-            zero_flag = is_str_zero(each[1])
-            if zero_flag and (each[0] in self.__asks):
-                self.__asks.pop(each[0])
-            elif not zero_flag:
-                self.__asks[each[0]] = each[1]
 
     def update_orderbook(self, update: dict):
         from_id = update['U']
@@ -107,7 +102,45 @@ class BinanceOrderBook(QObject):
             print('OB > Update: Snapshot is too NEW ### Current Id: {} ### {} > {}'
                   .format(self.__lastUpdateId, from_id, to_id))
 
-    def __sorted_copy(self, dictionary: dict):
+    def __parse_snapshot(self, snapshot):
+        try:
+            self.__lastUpdateId = snapshot['lastUpdateId']
+            self.__update_bids(snapshot['bids'])
+            self.__update_asks(snapshot['asks'])
+        except LookupError:
+            print('OB > Parse Snapshot ERROR')
+            return False
+        return True
+
+    @staticmethod
+    def __is_str_zero(value):
+        try:
+            value = float(value)
+            if value == 0:
+                return True
+            else:
+                return False
+        except ValueError:
+            return False
+
+    def __update_bids(self, bids_list):
+        for each in bids_list:
+            zero_flag = self.__is_str_zero(each[1])
+            if zero_flag and (each[0] in self.__bids):
+                self.__bids.pop(each[0])
+            elif not zero_flag:
+                self.__bids[each[0]] = each[1]
+
+    def __update_asks(self, asks_list):
+        for each in asks_list:
+            zero_flag = self.__is_str_zero(each[1])
+            if zero_flag and (each[0] in self.__asks):
+                self.__asks.pop(each[0])
+            elif not zero_flag:
+                self.__asks[each[0]] = each[1]
+
+    @staticmethod
+    def __sorted_copy(dictionary: dict):
         dct = dictionary.copy()
         try:
             res = [(Decimal(key), Decimal(dct[key])) for key in sorted(dct.keys())]
@@ -115,25 +148,16 @@ class BinanceOrderBook(QObject):
             return None
         return res
 
-    def save_to(self, filename):
-        bids = self.__sorted_copy(self.__bids)
-        asks = self.__sorted_copy(self.__asks)
-        data = {'lastUpdateId': self.__lastUpdateId,
-                'bids': bids,
-                'asks': asks}
-        with open(filename, 'w') as fp:
-            json.dump(data, fp, indent=2, ensure_ascii=False)
-
     def test_load_snapshot(self, filename):
         with open(filename, 'r') as fp:
             data = json.load(fp)
-        #print(data)
+        # print(data)
         self.__parse_snapshot(data)
 
     def test_load_update(self, filename):
         with open(filename, 'r') as fp:
             data = json.load(fp)
-        #print(data)
+        # print(data)
         self.update_orderbook(data)
 
 
@@ -143,6 +167,20 @@ class BinanceDepthWebsocket:
         # websocket.enableTrace(True)
         self.__order_book = order_book
         self.__symbol = order_book.get_symbol()
+        self.__ws = None
+        self.__wst = None
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+    def stop(self):
+        if self.__ws:
+            self.__ws.close()
+        if self.__wst and self.__wst.isAlive():
+            self.__wst.join(1)
+
+    def start(self):
+        self.stop()
 
         wss_url = 'wss://stream.binance.com:9443/ws/' + self.__symbol.lower() + '@depth'
         self.__ws = websocket.WebSocketApp(wss_url,
@@ -152,26 +190,17 @@ class BinanceDepthWebsocket:
                                            on_open=self.__on_open)
         self.__wst = threading.Thread(target=self.__runner)
         self.__wst.daemon = True
-        self.run()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.__ws.keep_running = False
-        self.__wst.join()
-        self.__ws.close()
-
-    def stop(self):
-        self.__ws.keep_running = False
-        self.__wst.join()
-
-    def run(self):
-        self.__ws.keep_running = True
         self.__wst.start()
 
     def __runner(self):
-        self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+        while True:
+            try:
+                self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+            except:
+                pass
 
     def __on_message(self, ws, message):
-        #print(message)
+        # print(message)
         json_data = json.loads(message)
         self.__order_book.update_orderbook(json_data)
 
@@ -185,7 +214,7 @@ class BinanceDepthWebsocket:
         print("WS > Opened")
 
 
-class TestUpdateReceiver(QObject):
+class _TestUpdateReceiver(QObject):
 
     def update_reciever(self, symbol: str, bids: list, asks: list):
         print('UR > Update signal is received! ### {} <> {} <> {}'.format(symbol, bids[0], asks[0]))
@@ -194,9 +223,8 @@ class TestUpdateReceiver(QObject):
 if __name__ == '__main__':
     bapi = BinanceApi(API_KEY, API_SECRET)
     symbol = 'ltceth'
-    ob = BinanceOrderBook(bapi, symbol)
-    ws = BinanceDepthWebsocket(ob)
-    ur = TestUpdateReceiver()
+    ob = BinanceOrderBook(bapi, symbol, True)
+    ur = _TestUpdateReceiver()
     ob.ob_updated.connect(ur.update_reciever)
 
     app = QCoreApplication(sys.argv)
