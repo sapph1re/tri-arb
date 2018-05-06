@@ -2,12 +2,12 @@ import sys
 import ssl
 import websocket
 import json
-import threading
 import gevent
 import time
 from decimal import *
 
-from PyQt5.QtCore import QCoreApplication, QObject, pyqtSignal
+from PyQt5.QtCore import (QCoreApplication, QThread,
+                          QObject, pyqtSignal)
 
 from binance_api import BinanceApi
 from config import API_KEY, API_SECRET
@@ -47,9 +47,7 @@ class BinanceOrderBook(QObject):
         return self.__websocket
 
     def start_websocket(self):
-        if self.__websocket:
-            self.__websocket.stop()
-        else:
+        if not self.__websocket:
             self.__websocket = BinanceDepthWebsocket(self)
         self.__websocket.start()
 
@@ -161,43 +159,39 @@ class BinanceOrderBook(QObject):
         self.update_orderbook(data)
 
 
-class BinanceDepthWebsocket:
+class BinanceDepthWebsocket(QThread):
 
     def __init__(self, order_book: BinanceOrderBook):
-        # websocket.enableTrace(True)
+        super(BinanceDepthWebsocket, self).__init__()
+
         self.__order_book = order_book
         self.__symbol = order_book.get_symbol()
-        self.__ws = None
-        self.__wst = None
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
-
-    def stop(self):
-        if self.__ws:
-            self.__ws.close()
-        if self.__wst and self.__wst.isAlive():
-            self.__wst.join(1)
-
-    def start(self):
-        self.stop()
 
         wss_url = 'wss://stream.binance.com:9443/ws/' + self.__symbol.lower() + '@depth'
+
         self.__ws = websocket.WebSocketApp(wss_url,
                                            on_message=self.__on_message,
                                            on_error=self.__on_error,
                                            on_close=self.__on_close,
                                            on_open=self.__on_open)
-        self.__wst = threading.Thread(target=self.__runner)
-        self.__wst.daemon = True
-        self.__wst.start()
 
-    def __runner(self):
+    def start(self):
+        super(BinanceDepthWebsocket, self).start()
+
+    def stop(self):
+        self.__ws.close(status=1001, timeout=5)  # status=1001: STATUS_GOING_AWAY
+        if self.__ws.sock:
+            self.__ws.sock = None
+        self.quit()
+        self.wait()
+
+    def run(self):
         while True:
             try:
-                self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-            except:
-                pass
+                self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}, ping_interval=5, ping_timeout=3)
+            except websocket.WebSocketException:
+                print('WS > WebSocketException ### Interrupted?')
+                break
 
     def __on_message(self, ws, message):
         # print(message)
@@ -205,7 +199,8 @@ class BinanceDepthWebsocket:
         self.__order_book.update_orderbook(json_data)
 
     def __on_error(self, ws, error):
-        print("WS > Error: " + error)
+        print("WS > Error: {}".format(str(error)))
+        self.sleep(1)
 
     def __on_close(self, ws):
         print("WS > Closed")
@@ -223,7 +218,17 @@ class _TestUpdateReceiver(QObject):
 if __name__ == '__main__':
     bapi = BinanceApi(API_KEY, API_SECRET)
     symbol = 'ltceth'
-    ob = BinanceOrderBook(bapi, symbol, True)
+    ob = BinanceOrderBook(api=bapi, symbol=symbol, start_websocket=True)
+    print('<> Websocket STARTED')
+    gevent.sleep(5)
+    print('<> 5 SEC PASSED')
+    ob.stop_websocket()
+    print('<> Websocket STOPPED')
+    gevent.sleep(2)
+    print('<> 2 SEC PASSED')
+    ob.start_websocket()
+    print('<> Websocket STARTED AGAIN')
+
     ur = _TestUpdateReceiver()
     ob.ob_updated.connect(ur.update_reciever)
 
