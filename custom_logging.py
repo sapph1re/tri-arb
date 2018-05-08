@@ -62,8 +62,11 @@ class StyleAdapter(logging.LoggerAdapter):
 def get_logger(name):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
-    log_formatter_debug = GracefulFormatter('{asctime} {levelname} [{threadName}] [{name}:{funcName}] {message}',
-                                            '%H:%M:%S')
+    #  format_krot = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s[LINE:%(lineno)d]\n%(message)s\n'
+    #  format_saph = '{asctime} {levelname} [{threadName}] [{name}:{funcName}] {message}'
+    format_main = '{asctime}\t{levelname}\t[{filename} <> {funcName}() <> LineNo:{lineno}]\t{message}'
+    format_time = '%H:%M:%S'
+    log_formatter_debug = GracefulFormatter(format_main, format_time)
     handler_console = logging.StreamHandler()
     handler_console.setLevel(logging.DEBUG)
     handler_console.setFormatter(log_formatter_debug)
