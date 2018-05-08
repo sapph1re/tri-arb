@@ -176,7 +176,7 @@ class ArbitrageDetector(QObject):
         profit_total_x = Decimal(0)
         while True:
             # check profitability
-            profit_rel = bids['xz'][0][0] / asks['xy'][0][0] * asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
+            profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
