@@ -439,7 +439,7 @@ class BinanceApi:
             Обязательные:
                 :param symbol: пара
                 :param orderId: ID ордера, назначенный биржей
-                :param rigClientOrderId: ID ордера, назначенный пользователем или сгенерированный (см. создание ордера)
+                :param origClientOrderId: ID ордера, назначенный пользователем или сгенерированный (см. создание ордера)
                 Либо orderId либо origClientOrderId необходимо предоставить.
                 timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
             Необязательные:
@@ -630,4 +630,3 @@ if __name__ == '__main__':
     print_list('allOrders', bot.allOrders('ethbtc', limit=5))
     print_dict('account', bot.account())
     print_list('myTrades', bot.myTrades('ethbtc', limit=5))
-

@@ -32,7 +32,7 @@ class BinanceOrderBook(QObject):
         if start_websocket:
             self.start_websocket()
 
-    ob_updated = pyqtSignal(str, list, list)
+    ob_updated = pyqtSignal(str)
 
     def get_symbol(self) -> str:
         return self.__symbol
@@ -67,9 +67,7 @@ class BinanceOrderBook(QObject):
         snapshot = self.__api.depth(symbol=self.__symbol, limit=1000)
         if self.__parse_snapshot(snapshot):
             print('OB > Initialized OB')
-            self.ob_updated.emit(self.__symbol,
-                                 self.get_bids(),
-                                 self.get_asks())
+            self.ob_updated.emit(self.__symbol)
             self.__start_time = time.time()
         else:
             print('OB > OB initialization FAILED! Retrying...')
@@ -88,9 +86,7 @@ class BinanceOrderBook(QObject):
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
-            self.ob_updated.emit(self.__symbol,
-                                 self.get_bids(),
-                                 self.get_asks())
+            self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
             print('OB > Update: Snapshot is too OLD ### Current Id: {} ### {} > {}'
                   .format(self.__lastUpdateId, from_id, to_id))
@@ -175,8 +171,8 @@ class BinanceDepthWebsocket(QThread):
                                            on_close=self.__on_close,
                                            on_open=self.__on_open)
 
-    def start(self):
-        super(BinanceDepthWebsocket, self).start()
+    def start(self, **kwargs):
+        super(BinanceDepthWebsocket, self).start(**kwargs)
 
     def stop(self):
         self.__ws.close(status=1001, timeout=5)  # status=1001: STATUS_GOING_AWAY
@@ -211,8 +207,8 @@ class BinanceDepthWebsocket(QThread):
 
 class _TestUpdateReceiver(QObject):
 
-    def update_reciever(self, symbol: str, bids: list, asks: list):
-        print('UR > Update signal is received! ### {} <> {} <> {}'.format(symbol, bids[0], asks[0]))
+    def update_reciever(self, symbol: str):
+        print('UR > Update signal is received! ### {}'.format(symbol))
 
 
 if __name__ == '__main__':
