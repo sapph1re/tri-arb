@@ -77,8 +77,7 @@ class ArbitrageDetector(QObject):
         self.min_profit = min_profit
         self.orderbooks = {}
         for pair in pairs:
-            ob = BinanceOrderBook(bapi, pair)
-            ws = BinanceDepthWebsocket(ob)
+            ob = BinanceOrderBook(bapi, pair, True)
             ob.ob_updated.connect(self.on_orderbook_updated)
             self.orderbooks[pair] = ob
         self.triangle = {
