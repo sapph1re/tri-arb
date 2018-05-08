@@ -57,3 +57,16 @@ class StyleAdapter(logging.LoggerAdapter):
         if self.isEnabledFor(level):
             msg, kwargs = self.process(msg, kwargs)
             self.logger._log(level, Message(msg, args), (), **kwargs)
+
+
+def get_logger(name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    log_formatter_debug = GracefulFormatter('{asctime} {levelname} [{threadName}] [{name}:{funcName}] {message}',
+                                            '%H:%M:%S')
+    handler_console = logging.StreamHandler()
+    handler_console.setLevel(logging.DEBUG)
+    handler_console.setFormatter(log_formatter_debug)
+    logger.addHandler(handler_console)
+    logger = StyleAdapter(logger)
+    return logger
