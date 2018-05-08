@@ -11,6 +11,9 @@ from PyQt5.QtCore import (QCoreApplication, QThread,
 
 from binance_api import BinanceApi
 from config import API_KEY, API_SECRET
+from custom_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class BinanceOrderBook(QObject):
@@ -66,34 +69,34 @@ class BinanceOrderBook(QObject):
     def init_order_book(self):
         snapshot = self.__api.depth(symbol=self.__symbol, limit=1000)
         if self.__parse_snapshot(snapshot):
-            print('OB > Initialized OB')
+            logger.info('OB > Initialized OB')
             self.ob_updated.emit(self.__symbol)
             self.__start_time = time.time()
         else:
-            print('OB > OB initialization FAILED! Retrying...')
+            logger.info('OB > OB initialization FAILED! Retrying...')
             gevent.sleep(1)
             self.init_order_book()
 
     def update_orderbook(self, update: dict):
         from_id = update['U']
         to_id = update['u']
-        print('OB > Update: Time diff = {}'.format(time.time() - self.__start_time))
+        logger.debug('OB > Update: Time diff = {}'.format(time.time() - self.__start_time))
         if time.time() - self.__start_time > self.__timeout:
-            print('OB > Update: Snapshot is OUT OF DATE! ### Current Id: {}'.format(self.__lastUpdateId))
+            logger.debug('OB > Update: Snapshot is OUT OF DATE! ### Current Id: {}'.format(self.__lastUpdateId))
             self.init_order_book()
         if from_id <= self.__lastUpdateId + 1 <= to_id:
-            print('OB > Update: OK ### Current Id: {} ### {} > {}'.format(self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB > Update: OK ### Current Id: {} ### {} > {}'.format(self.__lastUpdateId, from_id, to_id))
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
-            print('OB > Update: Snapshot is too OLD ### Current Id: {} ### {} > {}'
+            logger.debug('OB > Update: Snapshot is too OLD ### Current Id: {} ### {} > {}'
                   .format(self.__lastUpdateId, from_id, to_id))
             self.init_order_book()
             return False
         else:
-            print('OB > Update: Snapshot is too NEW ### Current Id: {} ### {} > {}'
+            logger.debug('OB > Update: Snapshot is too NEW ### Current Id: {} ### {} > {}'
                   .format(self.__lastUpdateId, from_id, to_id))
 
     def __parse_snapshot(self, snapshot):
@@ -102,7 +105,7 @@ class BinanceOrderBook(QObject):
             self.__update_bids(snapshot['bids'])
             self.__update_asks(snapshot['asks'])
         except LookupError:
-            print('OB > Parse Snapshot ERROR')
+            logger.debug('OB > Parse Snapshot ERROR')
             return False
         return True
 
@@ -145,13 +148,11 @@ class BinanceOrderBook(QObject):
     def test_load_snapshot(self, filename):
         with open(filename, 'r') as fp:
             data = json.load(fp)
-        # print(data)
         self.__parse_snapshot(data)
 
     def test_load_update(self, filename):
         with open(filename, 'r') as fp:
             data = json.load(fp)
-        # print(data)
         self.update_orderbook(data)
 
 
@@ -186,23 +187,22 @@ class BinanceDepthWebsocket(QThread):
             try:
                 self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}, ping_interval=5, ping_timeout=3)
             except websocket.WebSocketException:
-                print('WS > WebSocketException ### Interrupted?')
+                logger.error('WS > WebSocketException ### Interrupted?')
                 break
 
     def __on_message(self, ws, message):
-        # print(message)
         json_data = json.loads(message)
         self.__order_book.update_orderbook(json_data)
 
     def __on_error(self, ws, error):
-        print("WS > Error: {}".format(str(error)))
+        logger.error("WS > Error: {}".format(str(error)))
         self.sleep(1)
 
     def __on_close(self, ws):
-        print("WS > Closed")
+        logger.info("WS > Closed")
 
     def __on_open(self, ws):
-        print("WS > Opened")
+        logger.info("WS > Opened")
 
 
 class _TestUpdateReceiver(QObject):
