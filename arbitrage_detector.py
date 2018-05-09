@@ -1,4 +1,5 @@
 import sys
+import copy
 from decimal import Decimal
 from config import API_KEY, API_SECRET
 from binance_api import BinanceApi
@@ -113,11 +114,11 @@ class ArbitrageDetector(QThread):
                 if len(side[pair]) == 0:
                     logger.debug('Orderbooks are not ready yet')
                     return None
-        currency_x = pair_to_currencies(xy)[0]
+        currency_z = pair_to_currencies(yz)[1]
         # checking triangle in one direction: sell Y/Z -> buy X/Z -> sell X/Y
         amount_total_x = Decimal(0)
         amount_total_y = Decimal(0)
-        profit_total_x = Decimal(0)
+        profit_total_z = Decimal(0)
         while True:
             # check profitability
             profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
@@ -127,10 +128,12 @@ class ArbitrageDetector(QThread):
             amount_x, amount_y = self.calculate_amount_on_price_level(
                 bids['yz'][0], asks['xz'][0], bids['xy'][0]
             )
+            # calculate the profit on this level
+            profit_z = amount_y * bids['yz'][0][0] - amount_x * asks['xz'][0][0]
             # save the counted amounts and price levels
             amount_total_x += amount_x
             amount_total_y += amount_y
-            profit_total_x += profit_rel * amount_x
+            profit_total_z += profit_z
             prices = {'yz': bids['yz'][0][0], 'xz': asks['xz'][0][0], 'xy': bids['xy'][0][0]}
             # subtract the counted amounts from the orderbooks and try to go deeper on the next iteration
             bids['yz'][0] = (bids['yz'][0][0], bids['yz'][0][1] - amount_y)
@@ -148,14 +151,14 @@ class ArbitrageDetector(QThread):
                     MarketAction(xz, BUY, prices['xz'], amount_total_x),
                     MarketAction(xy, SELL, prices['xy'], amount_total_x)
                 ],
-                profit_rel=(profit_total_x / amount_total_x),
-                profit_abs=(profit_total_x, currency_x)
+                profit_rel=(profit_total_z / (amount_total_x * prices['xz'])),
+                profit_abs=(profit_total_z, currency_z)
             )
 
         # checking triangle in another direction: buy X/Y -> sell X/Z -> buy Y/Z
         amount_total_x = Decimal(0)
         amount_total_y = Decimal(0)
-        profit_total_x = Decimal(0)
+        profit_total_z = Decimal(0)
         while True:
             # check profitability
             profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
@@ -165,10 +168,12 @@ class ArbitrageDetector(QThread):
             amount_x, amount_y = self.calculate_amount_on_price_level(
                 asks['yz'][0], bids['xz'][0], asks['xy'][0]
             )
+            # calculate the profit on this level
+            profit_z = amount_y * bids['yz'][0][0] - amount_x * asks['xz'][0][0]
             # save the counted amounts and price levels
             amount_total_x += amount_x
             amount_total_y += amount_y
-            profit_total_x += profit_rel * amount_x
+            profit_total_z += profit_z
             prices = {'yz': asks['yz'][0][0], 'xz': bids['xz'][0][0], 'xy': asks['xy'][0][0]}
             # subtract the counted amounts from the orderbooks and try to go deeper on the next iteration
             asks['yz'][0] = (asks['yz'][0][0], asks['yz'][0][1] - amount_y)
@@ -186,8 +191,8 @@ class ArbitrageDetector(QThread):
                     MarketAction(xz, SELL, prices['xz'], amount_total_x),
                     MarketAction(yz, BUY, prices['yz'], amount_total_y)
                 ],
-                profit_rel=(profit_total_x / amount_total_x),
-                profit_abs=(profit_total_x, currency_x)
+                profit_rel=(profit_total_z / (amount_total_y * prices['yz'])),
+                profit_abs=(profit_total_z, currency_z)
             )
 
         return None
