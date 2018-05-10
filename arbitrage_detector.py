@@ -1,7 +1,6 @@
 import sys
-import copy
 from decimal import Decimal
-from config import API_KEY, API_SECRET
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi
 from binance_orderbook import BinanceOrderBook
 from PyQt5.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
@@ -214,8 +213,8 @@ class ArbitrageDetector(QThread):
 if __name__ == '__main__':
     detector = ArbitrageDetector(
         ['ethbtc', 'eosbtc', 'eoseth'],
-        fee=Decimal('0.0005'),
-        min_profit=Decimal('0.0001')
+        fee=TRADE_FEE,
+        min_profit=MIN_PROFIT
     )
 
     logger.info('Starting...')
