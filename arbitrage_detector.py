@@ -1,19 +1,11 @@
 import sys
 from decimal import Decimal
-from config import API_KEY, API_SECRET
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi
-from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
-from PyQt5.QtCore import QCoreApplication, QObject, pyqtSignal
-import logging
-from custom_logging import GracefulFormatter, StyleAdapter
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-log_formatter_debug = GracefulFormatter('{asctime} {levelname} [{threadName}] [{name}:{funcName}] {message}', '%H:%M:%S')
-handler_console = logging.StreamHandler()
-handler_console.setLevel(logging.DEBUG)
-handler_console.setFormatter(log_formatter_debug)
-logger.addHandler(handler_console)
-logger = StyleAdapter(logger)
+from binance_orderbook import BinanceOrderBook
+from PyQt5.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
+from custom_logging import get_logger
+logger = get_logger(__name__)
 
 
 bapi = BinanceApi(API_KEY, API_SECRET)
@@ -25,20 +17,6 @@ SELL = 'sell'
 
 def pair_to_currencies(pair):
     return pair[:3], pair[3:]
-
-
-class Money:
-    def __init__(self, amount, currency):
-        if not isinstance(amount, Decimal):
-            amount = Decimal(amount)
-        self.amount = amount
-        self.currency = currency
-
-    def __str__(self):
-        return '{} {}'.format(self.amount, self.currency.upper())
-
-    def __repr__(self):
-        return self.__str__()
 
 
 class MarketAction:
@@ -64,10 +42,14 @@ class Arbitrage:
 
     def __str__(self):
         actions_str = ' -> '.join([str(action) for action in self.actions])
-        return '{}, profit: {} ({}%)'.format(actions_str, self.profit_abs, self.profit_rel * 100)
+        profit_abs_str = '{} {}'.format(self.profit_abs[0], self.profit_abs[1])
+        return '{}, profit: {} ({}%)'.format(actions_str, profit_abs_str, self.profit_rel * 100)
+
+    def __repr__(self):
+        return self.__str__()
 
 
-class ArbitrageDetector(QObject):
+class ArbitrageDetector(QThread):
     arbitrage_detected = pyqtSignal(Arbitrage)
 
     def __init__(self, pairs, fee, min_profit):
@@ -90,7 +72,8 @@ class ArbitrageDetector(QObject):
         logger.info('Arbitrage found: {}', arbitrage)
         self.arbitrage_detected.emit(arbitrage)
 
-    def calculate_amount_on_price_level(self, yz: tuple, xz: tuple, xy: tuple) -> tuple:
+    @staticmethod
+    def calculate_amount_on_price_level(yz: tuple, xz: tuple, xy: tuple) -> tuple:
         """
         Calculates available trade amount on one depth level in the triangle
         :param yz: (price: Decimal, amount: Decimal) on Y/Z
@@ -125,16 +108,16 @@ class ArbitrageDetector(QObject):
             'xy': self.orderbooks[xy].get_asks()
         }
         # checking that orderbooks are not empty
-        for side in bids, asks:
+        for side in [bids, asks]:
             for pair in side:
                 if len(side[pair]) == 0:
                     logger.debug('Orderbooks are not ready yet')
                     return None
-        currency_x = pair_to_currencies(xy)[0]
+        currency_z = pair_to_currencies(yz)[1]
         # checking triangle in one direction: sell Y/Z -> buy X/Z -> sell X/Y
         amount_total_x = Decimal(0)
         amount_total_y = Decimal(0)
-        profit_total_x = Decimal(0)
+        profit_total_z = Decimal(0)
         while True:
             # check profitability
             profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
@@ -144,10 +127,12 @@ class ArbitrageDetector(QObject):
             amount_x, amount_y = self.calculate_amount_on_price_level(
                 bids['yz'][0], asks['xz'][0], bids['xy'][0]
             )
+            # calculate the profit on this level
+            profit_z = amount_y * bids['yz'][0][0] - amount_x * asks['xz'][0][0]
             # save the counted amounts and price levels
             amount_total_x += amount_x
             amount_total_y += amount_y
-            profit_total_x += profit_rel * amount_x
+            profit_total_z += profit_z
             prices = {'yz': bids['yz'][0][0], 'xz': asks['xz'][0][0], 'xy': bids['xy'][0][0]}
             # subtract the counted amounts from the orderbooks and try to go deeper on the next iteration
             bids['yz'][0] = (bids['yz'][0][0], bids['yz'][0][1] - amount_y)
@@ -165,14 +150,14 @@ class ArbitrageDetector(QObject):
                     MarketAction(xz, BUY, prices['xz'], amount_total_x),
                     MarketAction(xy, SELL, prices['xy'], amount_total_x)
                 ],
-                profit_rel=(profit_total_x / amount_total_x),
-                profit_abs=Money(profit_total_x, currency_x)
+                profit_rel=(profit_total_z / (amount_total_x * prices['xz'])),
+                profit_abs=(profit_total_z, currency_z)
             )
 
         # checking triangle in another direction: buy X/Y -> sell X/Z -> buy Y/Z
         amount_total_x = Decimal(0)
         amount_total_y = Decimal(0)
-        profit_total_x = Decimal(0)
+        profit_total_z = Decimal(0)
         while True:
             # check profitability
             profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
@@ -182,10 +167,12 @@ class ArbitrageDetector(QObject):
             amount_x, amount_y = self.calculate_amount_on_price_level(
                 asks['yz'][0], bids['xz'][0], asks['xy'][0]
             )
+            # calculate the profit on this level
+            profit_z = amount_y * bids['yz'][0][0] - amount_x * asks['xz'][0][0]
             # save the counted amounts and price levels
             amount_total_x += amount_x
             amount_total_y += amount_y
-            profit_total_x += profit_rel * amount_x
+            profit_total_z += profit_z
             prices = {'yz': asks['yz'][0][0], 'xz': bids['xz'][0][0], 'xy': asks['xy'][0][0]}
             # subtract the counted amounts from the orderbooks and try to go deeper on the next iteration
             asks['yz'][0] = (asks['yz'][0][0], asks['yz'][0][1] - amount_y)
@@ -203,13 +190,13 @@ class ArbitrageDetector(QObject):
                     MarketAction(xz, SELL, prices['xz'], amount_total_x),
                     MarketAction(yz, BUY, prices['yz'], amount_total_y)
                 ],
-                profit_rel=(profit_total_x / amount_total_x),
-                profit_abs=Money(profit_total_x, currency_x)
+                profit_rel=(profit_total_z / (amount_total_y * prices['yz'])),
+                profit_abs=(profit_total_z, currency_z)
             )
 
         return None
 
-    def on_orderbook_updated(self, symbol: str, bids: list, asks: list):
+    def on_orderbook_updated(self, symbol: str):
         symbol = symbol.lower()
         if symbol not in self.pairs:
             return
@@ -223,13 +210,14 @@ class ArbitrageDetector(QObject):
             logger.debug('No arbitrage found')
 
 
-detector = ArbitrageDetector(
-    ['ethbtc', 'eosbtc', 'eoseth'],
-    fee=Decimal('0.005'),
-    min_profit=Decimal('0.001')
-)
+if __name__ == '__main__':
+    detector = ArbitrageDetector(
+        ['ethbtc', 'eosbtc', 'eoseth'],
+        fee=TRADE_FEE,
+        min_profit=MIN_PROFIT
+    )
 
-logger.info('Starting...')
+    logger.info('Starting...')
 
-app = QCoreApplication(sys.argv)
-sys.exit(app.exec_())
+    app = QCoreApplication(sys.argv)
+    sys.exit(app.exec_())
