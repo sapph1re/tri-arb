@@ -18,12 +18,14 @@ logger = get_logger(__name__)
 
 class BinanceOrderBook(QObject):
 
-    def __init__(self, api: BinanceApi, symbol: str,
+    def __init__(self, api: BinanceApi, base: str, quote: str,
                  start_websocket: bool = False, reinit_timeout: int = 600):
         super().__init__()
 
         self.__api = api
-        self.__symbol = symbol.upper()
+        self.__base = base.upper()
+        self.__quote = quote.upper()
+        self.__symbol = self.__base + self.__quote
 
         self.__lastUpdateId = 0
         self.__bids = {}
@@ -36,6 +38,12 @@ class BinanceOrderBook(QObject):
             self.start_websocket()
 
     ob_updated = pyqtSignal(str)
+
+    def get_base(self) -> str:
+        return self.__base
+
+    def get_quote(self) -> str:
+        return self.__quote
 
     def get_symbol(self) -> str:
         return self.__symbol
@@ -92,12 +100,12 @@ class BinanceOrderBook(QObject):
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
             logger.debug('OB > Update: Snapshot is too OLD ### Current Id: {} ### {} > {}'
-                  .format(self.__lastUpdateId, from_id, to_id))
+                         .format(self.__lastUpdateId, from_id, to_id))
             self.init_order_book()
             return False
         else:
             logger.debug('OB > Update: Snapshot is too NEW ### Current Id: {} ### {} > {}'
-                  .format(self.__lastUpdateId, from_id, to_id))
+                         .format(self.__lastUpdateId, from_id, to_id))
 
     def __parse_snapshot(self, snapshot):
         try:
@@ -213,8 +221,11 @@ class _TestUpdateReceiver(QObject):
 
 if __name__ == '__main__':
     bapi = BinanceApi(API_KEY, API_SECRET)
-    symbol = 'ltceth'
-    ob = BinanceOrderBook(api=bapi, symbol=symbol, start_websocket=True)
+    base, quote = 'ltc', 'eth'
+    ob = BinanceOrderBook(api=bapi, base=base, quote=quote,
+                          start_websocket=True,  # optional, default: False
+                          reinit_timeout=300  # optional, default: 600
+                          )
     print('<> Websocket STARTED')
     gevent.sleep(5)
     print('<> 5 SEC PASSED')

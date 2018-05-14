@@ -4,10 +4,132 @@ import hmac
 import hashlib
 import requests
 
+from typing import List, Dict
 from urllib.parse import urlparse
 
-class BinanceApi:
 
+class BinanceSymbolInfo:
+
+    def __init__(self, json: dict):
+        """
+        :return: list of dictionaries with symbols info:
+        {
+            baseAssetPrecision: 8,  #  Как мы заметили, он одинаковый (т.е. равен 8) для всех символов
+            quotePrecision: 8,      #  Как мы заметили, он одинаковый (т.е. равен 8) для всех символов
+            filters: [
+                {
+                    filterType: "PRICE_FILTER",     #  Ограничение цены создаваемого ордера.
+                    minPrice: "0.00000100",         #  Цена ордера должна быть в диапазоне min_price и max_price,
+                    maxPrice: "100000.00000000",    #   и шаг торговли должен быть кратен tickSize.
+                    tickSize: "0.00000100"          #  Да да, тут нельзя ставить ордера с произвольной ценой.
+                },
+                {
+                    filterType: "LOT_SIZE",         #  ограничение объема создаваемого ордера.
+                    minQty: "0.00100000",           #  Объем должен быть в диапазоне minQty и maxQty,
+                    maxQty: "100000.00000000",      #   и быть кратен stepSize.
+                    stepSize: "0.00100000"
+                },
+                {
+                    filterType: "MIN_NOTIONAL",     # Итоговая сумма ордера (объем*цена) должна быть выше minNotional.
+                    minNotional: "0.00100000"
+                }
+            ]
+        }
+        """
+        self.__symbol = json['symbol']
+        self.__status = json[
+            'status']  # Возможные статусы: PRE_TRADING, TRADING, POST_TRADING, END_OF_DAY, HALT, AUCTION_MATCH, BREAK
+        self.__base_asset = json['baseAsset']
+        self.__quote_asset = json['quoteAsset']
+        # TODO: make precision values
+        self.__order_types = json[
+            'orderTypes']  # "LIMIT", "LIMIT_MAKER", "MARKET", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"
+        self.__iceberg_allowed = json['icebergAllowed']
+
+        self.__min_price_filter = None
+        self.__max_price_filter = None
+        self.__price_step_size = None
+        self.__min_qty_filter = None
+        self.__max_qty_filter = None
+        self.__qty_step_size = None
+        self.__min_notional = None
+
+        filters = json['filters']
+        for each in filters:
+            if each['filterType'] == 'PRICE_FILTER':
+                self.__min_price_filter = each['minPrice']
+                self.__max_price_filter = each['maxPrice']
+                self.__price_step_size = each['tickSize']
+            elif each['filterType'] == 'LOT_SIZE':
+                self.__min_qty_filter = each['minQty']
+                self.__max_qty_filter = each['maxQty']
+                self.__qty_step_size = each['stepSize']
+            elif each['filterType'] == 'MIN_NOTIONAL':
+                self.__min_notional = each['minNotional']
+
+    def get_symbol(self):
+        """
+        :return:  symbol (for example 'ETHBTC')
+        """
+        return self.__symbol
+
+    def get_status(self):
+        """
+        Possible statuses: PRE_TRADING, TRADING, POST_TRADING, END_OF_DAY, HALT, AUCTION_MATCH, BREAK
+        :return: One of possible statuses.
+        """
+        return self.__status
+
+    def get_base_asset(self):
+        """
+        :return: base asset (from symbol 'ETHBTC' it returns 'ETH')
+        """
+        return self.__base_asset
+
+    def get_quote_asset(self):
+        """
+        :return: quote asset (from symbol 'ETHBTC' it returns 'BTC')
+        """
+        return self.__quote_asset
+
+    def get_order_types(self):
+        """
+        Possible types: "LIMIT", "LIMIT_MAKER", "MARKET", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"
+        :return: list of available order types for current symbol
+        """
+        return self.__order_types
+
+    def is_iceberg_allowed(self):
+        return self.__iceberg_allowed
+
+    def get_price_filter(self):
+        """
+        Price limit filter:
+        1. minPrice <= yourPrice <= maxPrice
+        2. yourPrice % priceStepSize = 0
+        :return: tuple of 3 elements: minPrice, maxPrice and priceStepSize
+        """
+        return self.__min_price_filter, self.__max_price_filter, self.__price_step_size
+
+    def get_qty_filter(self):
+        """
+        Qty limit filter:
+        1. minQty <= yourQty <= maxQty
+        2. yourQty % qtyStepSize = 0
+        :return: tuple of 3 elements: minQty, maxQty and qtyStepSize
+        """
+        return self.__min_qty_filter, self.__max_qty_filter, self.__qty_step_size
+
+    def get_min_notional(self):
+        """
+        Notional filter:
+        yourPrice * yourQty >= minNotional
+        :return: minNotional
+        """
+        return self.__min_notional
+
+
+class BinanceApi:
     """
     Более подробная информация: https://bablofil.ru/binance-api/
 
@@ -84,7 +206,7 @@ class BinanceApi:
         """
         return self.__call_api(command='exchangeInfo')
 
-    def depth(self, symbol: str, limit: int=100):
+    def depth(self, symbol: str, limit: int = 100):
         """
         Открытые ордера на бирже - /api/v1/depth
         Метод позволяет получить книгу ордеров.
@@ -104,7 +226,7 @@ class BinanceApi:
         """
         return self.__call_api(command='depth', symbol=symbol.upper(), limit=limit)
 
-    def trades(self, symbol: str, limit: int=500):
+    def trades(self, symbol: str, limit: int = 500):
         """
         Последние (чужие) сделки - /api/v1/trades
 
@@ -120,8 +242,8 @@ class BinanceApi:
         """
         return self.__call_api(command='trades', symbol=symbol.upper(), limit=limit)
 
-    def aggTrades(self, symbol: str, fromID: int=None, limit: int=500,
-                  startTime: int=None, endTime: int=None):
+    def aggTrades(self, symbol: str, fromID: int = None, limit: int = 500,
+                  startTime: int = None, endTime: int = None):
         """
         Сжатая история сделок - /api/v1/aggTrades
 
@@ -152,8 +274,8 @@ class BinanceApi:
             kwargs['endTime'] = endTime
         return self.__call_api(**kwargs)
 
-    def klines(self, symbol: str, interval: str = '15m', limit: int=500,
-               startTime: int=None, endTime: int=None):
+    def klines(self, symbol: str, interval: str = '15m', limit: int = 500,
+               startTime: int = None, endTime: int = None):
         """
         Данные по свечам – /api/v1/klines
 
@@ -197,7 +319,7 @@ class BinanceApi:
             kwargs['endTime'] = endTime
         return self.__call_api(**kwargs)
 
-    def ticker24hr(self, symbol: str=None):
+    def ticker24hr(self, symbol: str = None):
         """
         Статистика за 24 часа - /api/v1/ticker/24hr
 
@@ -216,7 +338,7 @@ class BinanceApi:
             kwargs['symbol'] = symbol.upper()
         return self.__call_api(**kwargs)
 
-    def tickerPrice(self, symbol: str=None):
+    def tickerPrice(self, symbol: str = None):
         """
         Последняя цена по паре (или парам) - /api/v3/ticker/price
 
@@ -234,7 +356,7 @@ class BinanceApi:
             kwargs['symbol'] = symbol.upper()
         return self.__call_api(**kwargs)
 
-    def tickerBookTicker(self, symbol: str=None):
+    def tickerBookTicker(self, symbol: str = None):
         """
         Лучшие цены покупки/продажи - /api/v3/ticker/bookTicker
 
@@ -253,9 +375,9 @@ class BinanceApi:
         return self.__call_api(**kwargs)
 
     def createOrder(self, symbol: str, side: str, type: str, quantity,
-                    timeInForce: str=None, price=None, newClientOrderId: str=None,
-                    stopPrice=None, icebergQty=None, recvWindow: int=None,
-                    newOrderRespType: str=None):
+                    timeInForce: str = None, price=None, newClientOrderId: str = None,
+                    stopPrice=None, icebergQty=None, recvWindow: int = None,
+                    newOrderRespType: str = None):
         """
         Создание ордера - /api/v3/order
 
@@ -336,9 +458,9 @@ class BinanceApi:
         return self.__call_api(**kwargs)
 
     def testOrder(self, symbol: str, side: str, type: str, quantity,
-                    timeInForce: str=None, price=None, newClientOrderId: str=None,
-                    stopPrice=None, icebergQty=None, recvWindow: int=None,
-                    newOrderRespType: str=None):
+                  timeInForce: str = None, price=None, newClientOrderId: str = None,
+                  stopPrice=None, icebergQty=None, recvWindow: int = None,
+                  newOrderRespType: str = None):
         """
         Тестирование создания ордера: /api/v3/order/test
         Метод позволяет протестировать создание ордера – например, проверить, правильно ли настроены временные рамки. По факту такой ордер никогда не будет исполнен, и средства на его создание затрачены не будут.
@@ -588,6 +710,55 @@ class BinanceApi:
                                     data="" if self.methods[command]['method'] == 'GET' else payload, headers=headers)
         return response.json()
 
+    def get_symbols_info_json(self) -> List[dict]:
+        """
+        :return: list of dictionaries with symbols info:
+        {
+            symbol: "ETHBTC",
+            status: "TRADING",      #  Возможные статусы: PRE_TRADING, TRADING, POST_TRADING, END_OF_DAY,
+                                    #                    HALT, AUCTION_MATCH, BREAK
+            baseAsset: "ETH",
+            baseAssetPrecision: 8,  #  Как мы заметили, он одинаковый (т.е. равен 8) для всех символов
+            quoteAsset: "BTC",
+            quotePrecision: 8,      #  Как мы заметили, он одинаковый (т.е. равен 8) для всех символов
+            orderTypes: [
+                "LIMIT",
+                "LIMIT_MAKER",
+                "MARKET",
+                "STOP_LOSS_LIMIT",
+                "TAKE_PROFIT_LIMIT"
+            ],
+            icebergAllowed: false,  #
+            filters: [
+                {
+                    filterType: "PRICE_FILTER",     #  Ограничение цены создаваемого ордера.
+                    minPrice: "0.00000100",         #  Цена ордера должна быть в диапазоне min_price и max_price,
+                    maxPrice: "100000.00000000",    #   и шаг торговли должен быть кратен tickSize.
+                    tickSize: "0.00000100"          #  Да да, тут нельзя ставить ордера с произвольной ценой.
+                },
+                {
+                    filterType: "LOT_SIZE",         #  ограничение объема создаваемого ордера.
+                    minQty: "0.00100000",           #  Объем должен быть в диапазоне minQty и maxQty,
+                    maxQty: "100000.00000000",      #   и быть кратен stepSize.
+                    stepSize: "0.00100000"
+                },
+                {
+                    filterType: "MIN_NOTIONAL",     # Итоговая сумма ордера (объем*цена) должна быть выше minNotional.
+                    minNotional: "0.00100000"
+                }
+            ]
+        }
+        """
+        exchange_info = self.exchangeInfo()
+        try:
+            symbols_info = exchange_info['symbols']
+        except LookupError:
+            return []
+        return symbols_info
+
+    def get_symbols_info(self) -> Dict[str, BinanceSymbolInfo]:
+        return {each['symbol']: BinanceSymbolInfo(each) for each in self.get_symbols_info_json()}
+
 
 if __name__ == '__main__':
 
@@ -603,12 +774,12 @@ if __name__ == '__main__':
                     print(value)
         print()
 
-
     def print_dict(command_name, dct):
         print('<><><>' + command_name + '<><><>')
         for key, value in dct.items():
             print('{}:\t{}'.format(key, value))
         print()
+
 
     from config import API_KEY, API_SECRET
 
