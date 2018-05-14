@@ -168,7 +168,7 @@ class ArbitrageDetector(QThread):
                 asks['yz'][0], bids['xz'][0], asks['xy'][0]
             )
             # calculate the profit on this level
-            profit_z = amount_y * bids['yz'][0][0] - amount_x * asks['xz'][0][0]
+            profit_z = amount_x * bids['xz'][0][0] - amount_y * asks['yz'][0][0]
             # save the counted amounts and price levels
             amount_total_x += amount_x
             amount_total_y += amount_y
