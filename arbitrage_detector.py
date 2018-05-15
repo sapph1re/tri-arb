@@ -35,15 +35,18 @@ class MarketAction:
 
 
 class Arbitrage:
-    def __init__(self, actions, profit_rel, profit_abs):
+    def __init__(self, actions, currency_z, amount_z, profit_z, profit_rel):
         self.actions = actions
+        self.currency_z = currency_z
+        self.amount_z = amount_z
+        self.profit_z = profit_z
         self.profit_rel = profit_rel
-        self.profit_abs = profit_abs
 
     def __str__(self):
         actions_str = ' -> '.join([str(action) for action in self.actions])
-        profit_abs_str = '{} {}'.format(self.profit_abs[0], self.profit_abs[1])
-        return '{}, profit: {} ({}%)'.format(actions_str, profit_abs_str, self.profit_rel * 100)
+        return '{}, trade amount: {} {}, profit: {} {} ({}%)'.format(
+            actions_str, self.amount_z, self.currency_z, self.profit_z, self.currency_z, self.profit_rel * 100
+        )
 
     def __repr__(self):
         return self.__str__()
@@ -51,6 +54,7 @@ class Arbitrage:
 
 class ArbitrageDetector(QThread):
     arbitrage_detected = pyqtSignal(Arbitrage)
+    arbitrage_disappeared = pyqtSignal(str, str)  # e.g. 'ethbtc eosbtc eoseth', 'sell buy sell'
 
     def __init__(self, pairs, fee, min_profit):
         super(ArbitrageDetector, self).__init__()
@@ -58,6 +62,7 @@ class ArbitrageDetector(QThread):
         self.pairs = pairs
         self.min_profit = min_profit
         self.orderbooks = {}
+        self.existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
         for pair in pairs:
             ob = BinanceOrderBook(bapi, pair, True)
             ob.ob_updated.connect(self.on_orderbook_updated)
@@ -72,21 +77,41 @@ class ArbitrageDetector(QThread):
         logger.info('Arbitrage found: {}', arbitrage)
         self.arbitrage_detected.emit(arbitrage)
 
-    @staticmethod
-    def calculate_amount_on_price_level(yz: tuple, xz: tuple, xy: tuple) -> tuple:
+    def calculate_amounts_on_price_level(self, direction: str, yz: tuple, xz: tuple, xy: tuple) -> tuple:
         """
         Calculates available trade amount on one depth level in the triangle
+        :param direction: 'sell buy sell' or 'buy sell buy'
         :param yz: (price: Decimal, amount: Decimal) on Y/Z
         :param xz: (price: Decimal, amount: Decimal) on X/Z
         :param xy: (price: Decimal, amount: Decimal) on X/Y
-        :return: (amount_x: Decimal, amount_y: Decimal) - available amounts in X and in Y
+        :return: (amount_y, amount_x_buy, amount_x_sell) - amounts to use for the orders
         """
-        amount_x = min(xy[1], xz[1])
+        amount_x, limiter = min((xy[1], 'xy'), (xz[1], 'xz'))
         amount_y = amount_x * xy[0]
+        amount_x_buy = amount_x_sell = amount_x
+        if direction == 'sell buy sell':
+            amount_y *= 1 - self.fee
+            if limiter == 'xz':
+                amount_y *= 1 - self.fee
+        elif direction == 'buy sell buy':
+            amount_y /= 1 - self.fee
+            if limiter == 'xz':
+                amount_y /= 1 - self.fee
         if yz[1] < amount_y:
             amount_y = yz[1]
             amount_x = amount_y / xy[0]
-        return amount_x, amount_y
+            limiter = 'yz'
+            if direction == 'sell buy sell':
+                amount_x /= 1 - self.fee
+            elif direction == 'buy sell buy':
+                amount_x *= 1 - self.fee
+        if limiter == 'xz' and direction == 'sell buy sell' or limiter != 'xz' and direction == 'buy sell buy':
+            amount_x_buy = amount_x
+            amount_x_sell = amount_x * (1 - self.fee)
+        elif limiter != 'xz' and direction == 'sell buy sell' or limiter == 'xz' and direction == 'buy sell buy':
+            amount_x_buy = amount_x / (1 - self.fee)
+            amount_x_sell = amount_x
+        return amount_y, amount_x_buy, amount_x_sell
 
     def find_arbitrage_in_triangle(self, yz: str, xz: str, xy: str) -> Arbitrage or None:
         """
@@ -97,6 +122,14 @@ class ArbitrageDetector(QThread):
         :param xy: X/Y pair, e.g. 'eoseth'
         :return: Arbitrage instance or None
         """
+        # initializing existing_arbitrages storage
+        pairs = '{} {} {}'.format(yz, xz, xy)
+        if pairs not in self.existing_arbitrages:
+            self.existing_arbitrages[pairs] = {}
+        for actions in ['sell buy sell', 'buy sell buy']:
+            if actions not in self.existing_arbitrages[pairs]:
+                self.existing_arbitrages[pairs][actions] = False
+        # getting orderbooks
         bids = {
             'yz': self.orderbooks[yz].get_bids(),
             'xz': self.orderbooks[xz].get_bids(),
@@ -114,86 +147,108 @@ class ArbitrageDetector(QThread):
                     logger.debug('Orderbooks are not ready yet')
                     return None
         currency_z = pair_to_currencies(yz)[1]
-        # checking triangle in one direction: sell Y/Z -> buy X/Z -> sell X/Y
-        amount_total_x = Decimal(0)
-        amount_total_y = Decimal(0)
-        profit_total_z = Decimal(0)
+        # checking triangle in one direction: sell Y/Z, buy X/Z, sell X/Y
+        amount_x_buy_total = Decimal(0)
+        amount_x_sell_total = Decimal(0)
+        amount_y_total = Decimal(0)
+        amount_z_spend_total = Decimal(0)
+        profit_z_total = Decimal(0)
         while True:
             # check profitability
             profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
-            amount_x, amount_y = self.calculate_amount_on_price_level(
-                bids['yz'][0], asks['xz'][0], bids['xy'][0]
+            amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
+                'sell buy sell', bids['yz'][0], asks['xz'][0], bids['xy'][0]
             )
             # calculate the profit on this level
-            profit_z = amount_y * bids['yz'][0][0] - amount_x * asks['xz'][0][0]
+            profit_z = amount_y * bids['yz'][0][0] * (1 - self.fee) - amount_x_buy * asks['xz'][0][0]
             # save the counted amounts and price levels
-            amount_total_x += amount_x
-            amount_total_y += amount_y
-            profit_total_z += profit_z
+            amount_x_buy_total += amount_x_buy
+            amount_x_sell_total += amount_x_sell
+            amount_y_total += amount_y
+            amount_z_spend_total += amount_x_buy * asks['xz'][0][0]
+            profit_z_total += profit_z
             prices = {'yz': bids['yz'][0][0], 'xz': asks['xz'][0][0], 'xy': bids['xy'][0][0]}
             # subtract the counted amounts from the orderbooks and try to go deeper on the next iteration
             bids['yz'][0] = (bids['yz'][0][0], bids['yz'][0][1] - amount_y)
-            asks['xz'][0] = (asks['xz'][0][0], asks['xz'][0][1] - amount_x)
-            bids['xy'][0] = (bids['xy'][0][0], bids['xy'][0][1] - amount_x)
+            asks['xz'][0] = (asks['xz'][0][0], asks['xz'][0][1] - amount_x_buy)
+            bids['xy'][0] = (bids['xy'][0][0], bids['xy'][0][1] - amount_x_sell)
             for ob in [bids['yz'], asks['xz'], bids['xy']]:
                 if ob[0][1] < 0:
                     raise Exception('Critical calculation error')
                 if ob[0][1] == 0:
                     ob.pop(0)
-        if amount_total_x > 0:
+        if profit_z_total > 0:
+            if not self.existing_arbitrages[pairs]['sell buy sell']:
+                self.existing_arbitrages[pairs]['sell buy sell'] = True
             return Arbitrage(
                 actions=[
-                    MarketAction(yz, SELL, prices['yz'], amount_total_y),
-                    MarketAction(xz, BUY, prices['xz'], amount_total_x),
-                    MarketAction(xy, SELL, prices['xy'], amount_total_x)
+                    MarketAction(yz, SELL, prices['yz'], amount_y_total),
+                    MarketAction(xz, BUY, prices['xz'], amount_x_buy_total),
+                    MarketAction(xy, SELL, prices['xy'], amount_x_sell_total)
                 ],
-                profit_rel=(profit_total_z / (amount_total_x * prices['xz'])),
-                profit_abs=(profit_total_z, currency_z)
+                currency_z=currency_z,
+                amount_z=amount_z_spend_total,
+                profit_z=profit_z_total,
+                profit_rel=(profit_z_total / amount_z_spend_total)
             )
 
-        # checking triangle in another direction: buy X/Y -> sell X/Z -> buy Y/Z
-        amount_total_x = Decimal(0)
-        amount_total_y = Decimal(0)
-        profit_total_z = Decimal(0)
+        # checking triangle in another direction: buy Y/Z, sell X/Z, buy X/Y
+        amount_x_buy_total = Decimal(0)
+        amount_x_sell_total = Decimal(0)
+        amount_y_total = Decimal(0)
+        amount_z_spend_total = Decimal(0)
+        profit_z_total = Decimal(0)
         while True:
             # check profitability
             profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
-            amount_x, amount_y = self.calculate_amount_on_price_level(
-                asks['yz'][0], bids['xz'][0], asks['xy'][0]
+            amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
+                'buy sell buy', asks['yz'][0], bids['xz'][0], asks['xy'][0]
             )
             # calculate the profit on this level
-            profit_z = amount_x * bids['xz'][0][0] - amount_y * asks['yz'][0][0]
+            profit_z = amount_x_sell * bids['xz'][0][0] * (1 - self.fee) - amount_y * asks['yz'][0][0]
             # save the counted amounts and price levels
-            amount_total_x += amount_x
-            amount_total_y += amount_y
-            profit_total_z += profit_z
+            amount_x_buy_total += amount_x_buy
+            amount_x_sell_total += amount_x_sell
+            amount_y_total += amount_y
+            amount_z_spend_total += amount_y * asks['yz'][0][0]
+            profit_z_total += profit_z
             prices = {'yz': asks['yz'][0][0], 'xz': bids['xz'][0][0], 'xy': asks['xy'][0][0]}
             # subtract the counted amounts from the orderbooks and try to go deeper on the next iteration
             asks['yz'][0] = (asks['yz'][0][0], asks['yz'][0][1] - amount_y)
-            bids['xz'][0] = (bids['xz'][0][0], bids['xz'][0][1] - amount_x)
-            asks['xy'][0] = (asks['xy'][0][0], asks['xy'][0][1] - amount_x)
+            bids['xz'][0] = (bids['xz'][0][0], bids['xz'][0][1] - amount_x_sell)
+            asks['xy'][0] = (asks['xy'][0][0], asks['xy'][0][1] - amount_x_buy)
             for ob in [asks['yz'], bids['xz'], asks['xy']]:
                 if ob[0][1] < 0:
                     raise Exception('Critical calculation error')
                 if ob[0][1] == 0:
                     ob.pop(0)
-        if amount_total_x > 0:
+        if profit_z_total > 0:
+            if not self.existing_arbitrages[pairs]['buy sell buy']:
+                self.existing_arbitrages[pairs]['buy sell buy'] = True
             return Arbitrage(
                 actions=[
-                    MarketAction(xy, BUY, prices['xy'], amount_total_x),
-                    MarketAction(xz, SELL, prices['xz'], amount_total_x),
-                    MarketAction(yz, BUY, prices['yz'], amount_total_y)
+                    MarketAction(yz, BUY, prices['yz'], amount_y_total),
+                    MarketAction(xz, SELL, prices['xz'], amount_x_sell_total),
+                    MarketAction(xy, BUY, prices['xy'], amount_x_buy_total),
                 ],
-                profit_rel=(profit_total_z / (amount_total_y * prices['yz'])),
-                profit_abs=(profit_total_z, currency_z)
+                currency_z=currency_z,
+                amount_z=amount_z_spend_total,
+                profit_z=profit_z_total,
+                profit_rel=(profit_z_total / amount_z_spend_total)
             )
 
+        # no arbitrage found
+        logger.debug('No arbitrage found')
+        for actions in ['sell buy sell', 'buy sell buy']:
+            if self.existing_arbitrages[pairs][actions]:
+                self.existing_arbitrages[pairs][actions] = False
+                self.arbitrage_disappeared.emit(pairs, actions)
         return None
 
     def on_orderbook_updated(self, symbol: str):
@@ -206,8 +261,6 @@ class ArbitrageDetector(QThread):
         arbitrage = self.find_arbitrage_in_triangle(yz, xz, xy)
         if arbitrage is not None:
             self.report_arbitrage(arbitrage)
-        else:
-            logger.debug('No arbitrage found')
 
 
 if __name__ == '__main__':
