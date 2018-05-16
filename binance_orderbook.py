@@ -16,10 +16,101 @@ from custom_logging import get_logger
 logger = get_logger(__name__)
 
 
+class BinanceDepthWebsocket(QThread):
+
+    symbol_updated = pyqtSignal(dict)
+
+    def __init__(self):
+        super(BinanceDepthWebsocket, self).__init__()
+        self.__symbols = set()
+        self.__wss_url = ''
+        self.__ws = None
+
+    def __del__(self):
+        self.stop()
+
+    def add_symbol(self, symbol: str):
+        self.__symbols.add(symbol)
+        self.__wss_url = 'wss://stream.binance.com:9443/stream?streams='
+        for each in self.__symbols:
+            wss_name = each.lower() + '@depth/'
+            self.__wss_url += wss_name
+
+    def add_symbols_list(self, symbols_list: list):
+        for each in symbols_list:
+            self.add_symbol(each)
+
+    def remove_symbol(self, symbol: str):
+        self.__symbols.remove(symbol)
+        self.__wss_url = 'wss://stream.binance.com:9443/stream?streams='
+        for each in self.__symbols:
+            wss_name = each.lower() + '@depth/'
+            self.__wss_url += wss_name
+
+    def remove_symbols_list(self, symbols_list: list):
+        for each in symbols_list:
+            self.remove_symbol(each)
+
+    def start(self, **kwargs):
+        if self.__ws:
+            self.stop()
+
+        if not self.__wss_url:
+            return
+
+        self.__ws = websocket.WebSocketApp(self.__wss_url,
+                                           on_message=self.__on_message,
+                                           on_error=self.__on_error,
+                                           on_close=self.__on_close,
+                                           on_open=self.__on_open)
+
+        super(BinanceDepthWebsocket, self).start(**kwargs)
+
+    def stop(self):
+        self.__ws.close(status=1001, timeout=5)  # status=1001: STATUS_GOING_AWAY
+        if self.__ws.sock:
+            self.__ws.sock = None
+        self.quit()
+        self.wait()
+
+    def run(self):
+        while True:
+            try:
+                if self.__ws:
+                    self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}, ping_interval=5, ping_timeout=3)
+                else:
+                    logger.error('WS > No symbols added to start websocket!')
+                    self.sleep(1)
+            except websocket.WebSocketException:
+                logger.error('WS > WebSocketException ### Interrupted?')
+                break
+
+    def __on_message(self, ws, message):
+        json_data = json.loads(message)
+        logger.debug('WS > Message RECEIVED ### {}', json.dumps(json_data))
+        try:
+            data = json_data['data']
+        except KeyError:
+            data = {}
+        self.symbol_updated.emit(data)
+
+    def __on_error(self, ws, error):
+        logger.error("WS > Error: {}".format(str(error)))
+        self.sleep(1)
+
+    def __on_close(self, ws):
+        logger.info("WS > Closed")
+
+    def __on_open(self, ws):
+        logger.info("WS > Opened")
+
+
 class BinanceOrderBook(QObject):
 
+    ob_updated = pyqtSignal(str)
+
     def __init__(self, api: BinanceApi, base: str, quote: str,
-                 start_websocket: bool = False, reinit_timeout: int = 600):
+                 websocket: BinanceDepthWebsocket = None, reinit_timeout: int = 600):
         super().__init__()
 
         self.__api = api
@@ -27,17 +118,16 @@ class BinanceOrderBook(QObject):
         self.__quote = quote.upper()
         self.__symbol = self.__base + self.__quote
 
+        self.__websocket = websocket
+        if self.__websocket:
+            self.__websocket.add_symbol(self.__symbol)
+            self.__websocket.symbol_updated.connect(self.update_orderbook)
+
         self.__lastUpdateId = 0
         self.__bids = {}
         self.__asks = {}
         self.__start_time = time.time()
         self.__timeout = reinit_timeout  # in seconds
-
-        self.__websocket = None
-        if start_websocket:
-            self.start_websocket()
-
-    ob_updated = pyqtSignal(str)
 
     def get_base(self) -> str:
         return self.__base
@@ -54,16 +144,22 @@ class BinanceOrderBook(QObject):
     def get_asks(self) -> list:
         return self.__sorted_copy(self.__asks)
 
+    def set_websocket(self, ws: BinanceDepthWebsocket):
+        self.remove_websocket()
+
+        self.__websocket = ws
+        self.__websocket.add_symbol(self.__symbol)
+        self.__websocket.symbol_updated.connect(self.update_orderbook)
+
+    def remove_websocket(self):
+        if not self.__websocket:
+            return
+
+        self.__websocket.remove_symbol(self.__symbol)
+        self.__websocket.symbol_updated.disconnect(self.update_orderbook)
+
     def get_websocket(self):
         return self.__websocket
-
-    def start_websocket(self):
-        if not self.__websocket:
-            self.__websocket = BinanceDepthWebsocket(self)
-        self.__websocket.start()
-
-    def stop_websocket(self):
-        self.__websocket.stop()
 
     def save_to(self, filename):
         bids = self.__sorted_copy(self.__bids)
@@ -77,35 +173,40 @@ class BinanceOrderBook(QObject):
     def init_order_book(self):
         snapshot = self.__api.depth(symbol=self.__symbol, limit=1000)
         if self.__parse_snapshot(snapshot):
-            logger.info('OB > Initialized OB')
+            logger.info('OB {} > Initialized OB'.format(self.__symbol))
             self.ob_updated.emit(self.__symbol)
             self.__start_time = time.time()
         else:
-            logger.info('OB > OB initialization FAILED! Retrying...')
+            logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
             gevent.sleep(1)
             self.init_order_book()
 
     def update_orderbook(self, update: dict):
+        if not update or update['s'] != self.__symbol:
+            return
+
         from_id = update['U']
         to_id = update['u']
-        logger.debug('OB > Update: Time diff = {}'.format(time.time() - self.__start_time))
+        # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
         if time.time() - self.__start_time > self.__timeout:
-            logger.debug('OB > Update: Snapshot is OUT OF DATE! ### Current Id: {}'.format(self.__lastUpdateId))
+            logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}'
+                         .format(self.__symbol, self.__lastUpdateId))
             self.init_order_book()
         if from_id <= self.__lastUpdateId + 1 <= to_id:
-            logger.debug('OB > Update: OK ### Current Id: {} ### {} > {}'.format(self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB {} > Update: OK ### {} ### {} > {}'
+                         .format(self.__symbol, self.__lastUpdateId, from_id, to_id))
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
-            logger.debug('OB > Update: Snapshot is too OLD ### Current Id: {} ### {} > {}'
-                         .format(self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}'
+                         .format(self.__symbol, self.__lastUpdateId, from_id, to_id))
             self.init_order_book()
             return False
         else:
-            logger.debug('OB > Update: Snapshot is too NEW ### Current Id: {} ### {} > {}'
-                         .format(self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}'
+                         .format(self.__symbol, self.__lastUpdateId, from_id, to_id))
 
     def __parse_snapshot(self, snapshot):
         try:
@@ -113,7 +214,7 @@ class BinanceOrderBook(QObject):
             self.__update_bids(snapshot['bids'])
             self.__update_asks(snapshot['asks'])
         except LookupError:
-            logger.debug('OB > Parse Snapshot ERROR')
+            logger.debug('OB {} > Parse Snapshot ERROR'.format(self.__symbol))
             return False
         return True
 
@@ -164,80 +265,45 @@ class BinanceOrderBook(QObject):
         self.update_orderbook(data)
 
 
-class BinanceDepthWebsocket(QThread):
-
-    def __init__(self, order_book: BinanceOrderBook):
-        super(BinanceDepthWebsocket, self).__init__()
-
-        self.__order_book = order_book
-        self.__symbol = order_book.get_symbol()
-
-        wss_url = 'wss://stream.binance.com:9443/ws/' + self.__symbol.lower() + '@depth'
-
-        self.__ws = websocket.WebSocketApp(wss_url,
-                                           on_message=self.__on_message,
-                                           on_error=self.__on_error,
-                                           on_close=self.__on_close,
-                                           on_open=self.__on_open)
-
-    def start(self, **kwargs):
-        super(BinanceDepthWebsocket, self).start(**kwargs)
-
-    def stop(self):
-        self.__ws.close(status=1001, timeout=5)  # status=1001: STATUS_GOING_AWAY
-        if self.__ws.sock:
-            self.__ws.sock = None
-        self.quit()
-        self.wait()
-
-    def run(self):
-        while True:
-            try:
-                self.__ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}, ping_interval=5, ping_timeout=3)
-            except websocket.WebSocketException:
-                logger.error('WS > WebSocketException ### Interrupted?')
-                break
-
-    def __on_message(self, ws, message):
-        json_data = json.loads(message)
-        self.__order_book.update_orderbook(json_data)
-
-    def __on_error(self, ws, error):
-        logger.error("WS > Error: {}".format(str(error)))
-        self.sleep(1)
-
-    def __on_close(self, ws):
-        logger.info("WS > Closed")
-
-    def __on_open(self, ws):
-        logger.info("WS > Opened")
-
-
 class _TestUpdateReceiver(QObject):
 
-    def update_reciever(self, symbol: str):
+    @staticmethod
+    def update_reciever(symbol: str):
         print('UR > Update signal is received! ### {}'.format(symbol))
 
 
 if __name__ == '__main__':
     bapi = BinanceApi(API_KEY, API_SECRET)
-    base, quote = 'ltc', 'eth'
-    ob = BinanceOrderBook(api=bapi, base=base, quote=quote,
-                          start_websocket=True,  # optional, default: False
-                          reinit_timeout=300  # optional, default: 600
-                          )
-    print('<> Websocket STARTED')
-    gevent.sleep(5)
-    print('<> 5 SEC PASSED')
-    ob.stop_websocket()
-    print('<> Websocket STOPPED')
-    gevent.sleep(2)
-    print('<> 2 SEC PASSED')
-    ob.start_websocket()
-    print('<> Websocket STARTED AGAIN')
 
-    ur = _TestUpdateReceiver()
-    ob.ob_updated.connect(ur.update_reciever)
+    ws1 = BinanceDepthWebsocket()
+    ob1 = BinanceOrderBook(api=bapi, base='ltc', quote='eth',
+                           websocket=ws1,  # optional, default: None
+                           reinit_timeout=300  # optional, default: 600
+                           )
+
+    print('<> 1-st Websocket STARTED')
+    ws1.start()
+    gevent.sleep(5)
+
+    print('<> 5 SEC PASSED')
+    ws1.stop()
+    print('<> 1-st Websocket STOPPED')
+
+    ws2 = BinanceDepthWebsocket()
+
+    ob1.set_websocket(ws2)
+
+    ob2 = BinanceOrderBook(api=bapi, base='bnb', quote='btc',
+                           websocket=ws2, reinit_timeout=300)
+
+    ob3 = BinanceOrderBook(bapi, 'eos', 'btc')
+    ob3.set_websocket(ws2)
+
+    print('<> 2-nd Websocket STARTED')
+    ws2.start()
+
+    # ur = _TestUpdateReceiver()
+    # ob2.ob_updated.connect(ur.update_reciever)
 
     app = QCoreApplication(sys.argv)
     sys.exit(app.exec_())
