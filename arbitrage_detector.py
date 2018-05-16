@@ -1,34 +1,28 @@
 import sys
 from decimal import Decimal
+from typing import Dict, Tuple
 from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
-from binance_api import BinanceApi
-from binance_orderbook import BinanceOrderBook
+from binance_api import BinanceApi, BinanceSymbolInfo
+from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
+from triangles_finder import TrianglesFinder
 from PyQt5.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
 from custom_logging import get_logger
 logger = get_logger(__name__)
-
-
-bapi = BinanceApi(API_KEY, API_SECRET)
 
 
 BUY = 'buy'
 SELL = 'sell'
 
 
-def pair_to_currencies(pair):
-    return pair[:3], pair[3:]
-
-
 class MarketAction:
-    def __init__(self, pair: str, action: str, price: Decimal, amount: Decimal):
+    def __init__(self, pair: Tuple[str, str], action: str, price: Decimal, amount: Decimal):
         self.pair = pair
         self.action = action
         self.price = price
         self.amount = amount
 
     def __str__(self):
-        pair_pretty = '{}/{}'.format(self.pair[:3].upper(), self.pair[3:].upper())
-        return '{} {} {} @ {}'.format(self.action, self.amount, pair_pretty, self.price)
+        return '{} {} {}/{} @ {}'.format(self.action, self.amount, self.pair[0], self.pair[1], self.price)
 
     def __repr__(self):
         return self.__str__()
@@ -56,22 +50,71 @@ class ArbitrageDetector(QThread):
     arbitrage_detected = pyqtSignal(Arbitrage)
     arbitrage_disappeared = pyqtSignal(str, str)  # e.g. 'ethbtc eosbtc eoseth', 'sell buy sell'
 
-    def __init__(self, pairs, fee, min_profit):
+    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal):
+        """
+        Launches Arbitrage Detector
+        :param api: BinanceApi instance
+        :param symbols_info: {symbol: BinanceSymbolInfo, ...}
+        :param fee: trade fee on the exchange
+        :param min_profit: detect arbitrage with this profit or higher
+        """
         super(ArbitrageDetector, self).__init__()
+        self.api = api
         self.fee = fee
-        self.pairs = pairs
         self.min_profit = min_profit
         self.orderbooks = {}
         self.existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
-        for pair in pairs:
-            ob = BinanceOrderBook(bapi, pair, True)
+        self.triangles = TrianglesFinder().make_triangles(symbols_info)
+        self.triangles, self.symbols = self._verify_triangles(self.triangles)
+        logger.debug('Triangles: {}', self.triangles)
+        logger.debug('Symbols: {}', self.symbols)
+        ws = BinanceDepthWebsocket()
+        for symbol, details in self.symbols.items():
+            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
             ob.ob_updated.connect(self.on_orderbook_updated)
-            self.orderbooks[pair] = ob
-        self.triangle = {
-            'yz': pairs[0],
-            'xz': pairs[1],
-            'xy': pairs[2]
-        }
+            self.orderbooks[symbol] = ob
+        ws.start()
+
+    @staticmethod
+    def _order_symbols_in_triangle(triangle: tuple):
+        """
+        Orders triangle properly
+        :param triangle: ((str, str), (str, str), (str, str))
+        :return: triangle in proper order (YZ, XZ, XY)
+        """
+        # yz, xz, xy
+        a, b, c = triangle
+        if a[1] == c[1]:
+            b, c = c, b
+        elif b[1] == c[1]:
+            a, b, c = b, c, a
+        if a[0] != c[1]:
+            a, b = b, a
+        return a, b, c
+
+    def _verify_triangles(self, triangles: set) -> Tuple[set, dict]:
+        """
+        Checks every triangle for the correct format & sequence: ((Y, Z), (X, Z), (X, Y)).
+        :return: (triangles: set, symbols: dict)
+        Returns a set of triangles with all incorrect triangles removed or corrected,
+        and a dict of symbols used in the triangles.
+        """
+        symbols = {}
+        triangles_verified = set()
+        for triangle in triangles:
+            triangle = self._order_symbols_in_triangle(triangle)
+            if triangle[0][0] == triangle[2][1] and triangle[0][1] == triangle[1][1] and triangle[1][0] == triangle[2][0]:
+                triangles_verified.add(triangle)
+                for pair in triangle:
+                    symbol = pair[0]+pair[1]
+                    if symbol not in symbols:
+                        symbols[symbol] = {
+                            'base': pair[0],
+                            'quote': pair[1],
+                            'triangles': set()
+                        }
+                    symbols[symbol]['triangles'].add(triangle)
+        return triangles_verified, symbols
 
     def report_arbitrage(self, arbitrage: Arbitrage):
         logger.info('Arbitrage found: {}', arbitrage)
@@ -113,15 +156,17 @@ class ArbitrageDetector(QThread):
             amount_x_sell = amount_x
         return amount_y, amount_x_buy, amount_x_sell
 
-    def find_arbitrage_in_triangle(self, yz: str, xz: str, xy: str) -> Arbitrage or None:
+    def find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
         """
         Looks for arbitrage in the triangle: Y/Z, X/Z, X/Y.
         X, Y, Z are three currencies for which exist the three currency pairs above
-        :param yz: Y/Z pair, e.g. 'ethbtc'
-        :param xz: X/Z pair, e.g. 'eosbtc'
-        :param xy: X/Y pair, e.g. 'eoseth'
+        :param triangle: ((Y, Z), (X, Z), (X, Y)) example: (('ETH', 'BTC'), ('EOS', 'BTC'), ('EOS', 'ETH'))
         :return: Arbitrage instance or None
         """
+        yz = triangle[0][0]+triangle[0][1]
+        xz = triangle[1][0]+triangle[1][1]
+        xy = triangle[2][0]+triangle[2][1]
+        currency_z = triangle[0][1]
         # initializing existing_arbitrages storage
         pairs = '{} {} {}'.format(yz, xz, xy)
         if pairs not in self.existing_arbitrages:
@@ -146,7 +191,6 @@ class ArbitrageDetector(QThread):
                 if len(side[pair]) == 0:
                     logger.debug('Orderbooks are not ready yet')
                     return None
-        currency_z = pair_to_currencies(yz)[1]
         # checking triangle in one direction: sell Y/Z, buy X/Z, sell X/Y
         amount_x_buy_total = Decimal(0)
         amount_x_sell_total = Decimal(0)
@@ -185,9 +229,9 @@ class ArbitrageDetector(QThread):
                 self.existing_arbitrages[pairs]['sell buy sell'] = True
             return Arbitrage(
                 actions=[
-                    MarketAction(yz, SELL, prices['yz'], amount_y_total),
-                    MarketAction(xz, BUY, prices['xz'], amount_x_buy_total),
-                    MarketAction(xy, SELL, prices['xy'], amount_x_sell_total)
+                    MarketAction(triangle[0], SELL, prices['yz'], amount_y_total),
+                    MarketAction(triangle[1], BUY, prices['xz'], amount_x_buy_total),
+                    MarketAction(triangle[2], SELL, prices['xy'], amount_x_sell_total)
                 ],
                 currency_z=currency_z,
                 amount_z=amount_z_spend_total,
@@ -233,9 +277,9 @@ class ArbitrageDetector(QThread):
                 self.existing_arbitrages[pairs]['buy sell buy'] = True
             return Arbitrage(
                 actions=[
-                    MarketAction(yz, BUY, prices['yz'], amount_y_total),
-                    MarketAction(xz, SELL, prices['xz'], amount_x_sell_total),
-                    MarketAction(xy, BUY, prices['xy'], amount_x_buy_total),
+                    MarketAction(triangle[0], BUY, prices['yz'], amount_y_total),
+                    MarketAction(triangle[1], SELL, prices['xz'], amount_x_sell_total),
+                    MarketAction(triangle[2], BUY, prices['xy'], amount_x_buy_total),
                 ],
                 currency_z=currency_z,
                 amount_z=amount_z_spend_total,
@@ -252,25 +296,32 @@ class ArbitrageDetector(QThread):
         return None
 
     def on_orderbook_updated(self, symbol: str):
-        symbol = symbol.lower()
-        if symbol not in self.pairs:
+        if symbol not in self.symbols:
             return
-        yz = self.triangle['yz']
-        xz = self.triangle['xz']
-        xy = self.triangle['xy']
-        arbitrage = self.find_arbitrage_in_triangle(yz, xz, xy)
-        if arbitrage is not None:
-            self.report_arbitrage(arbitrage)
+        for triangle in self.symbols[symbol]['triangles']:
+            arbitrage = self.find_arbitrage_in_triangle(triangle)
+            if arbitrage is not None:
+                self.report_arbitrage(arbitrage)
 
 
 if __name__ == '__main__':
+    logger.info('Starting...')
+    api = BinanceApi(API_KEY, API_SECRET)
+    symbols_info = api.get_symbols_info()
+    symbols_info_slice = {}
+    i = 0
+    for symbol, symbol_info in symbols_info.items():
+        symbols_info_slice[symbol] = symbol_info
+        i += 1
+        if i >= 20:
+            break
+    logger.debug('All Symbols Info: {}', symbols_info_slice)
     detector = ArbitrageDetector(
-        ['ethbtc', 'eosbtc', 'eoseth'],
+        api=api,
+        symbols_info=symbols_info_slice,
         fee=TRADE_FEE,
         min_profit=MIN_PROFIT
     )
-
-    logger.info('Starting...')
 
     app = QCoreApplication(sys.argv)
     sys.exit(app.exec_())
