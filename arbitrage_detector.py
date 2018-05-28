@@ -71,11 +71,9 @@ class ArbitrageDetector(QThread):
         self.triangles, self.symbols = self._verify_triangles(self.triangles)
         logger.debug('Triangles: {}', self.triangles)
         logger.debug('Symbols: {}', self.symbols)
-        ws = BinanceDepthWebsocket()
-        for symbol, details in self.symbols.items():
-            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
-            ob.ob_updated.connect(self.on_orderbook_updated)
-            self.orderbooks[symbol] = ob
+
+        # load order amount requirements
+        for symbol in self.symbols:
             for sym_filter in self.symbols_info[symbol]['filters']:
                 if sym_filter['filterType'] == 'LOT_SIZE':
                     self.symbols_info[symbol]['min_amount'] = Decimal(sym_filter['minQty'])
@@ -83,7 +81,30 @@ class ArbitrageDetector(QThread):
                     self.symbols_info[symbol]['amount_step'] = Decimal(sym_filter['stepSize'])
                 if sym_filter['filterType'] == 'MIN_NOTIONAL':
                     self.symbols_info[symbol]['min_notional'] = Decimal(sym_filter['minNotional'])
-        ws.start()
+
+        # start watching the orderbooks
+        self.threads = []
+        self.websockets = []
+        i = 999
+        for symbol, details in self.symbols.items():
+            # starting a thread and a websocket per every 50 symbols
+            if i >= 50:
+                th = QThread()
+                self.threads.append(th)
+                ws = BinanceDepthWebsocket()
+                ws.moveToThread(th)
+                self.websockets.append(ws)
+                i = 0
+            # starting an orderbook watcher for every symbol
+            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
+            ob.moveToThread(th)
+            ob.ob_updated.connect(self.on_orderbook_updated)
+            self.orderbooks[symbol] = ob
+            i += 1
+        for thread in self.threads:
+            thread.start()
+        for ws in self.websockets:
+            ws.connect()
 
     @staticmethod
     def _order_symbols_in_triangle(triangle: tuple):
@@ -476,6 +497,5 @@ if __name__ == '__main__':
         fee=TRADE_FEE,
         min_profit=MIN_PROFIT
     )
-
     app = QCoreApplication(sys.argv)
     sys.exit(app.exec_())
