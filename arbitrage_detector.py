@@ -251,16 +251,16 @@ class ArbitrageDetector(QThread):
                 amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self.fee) - amounts_new['x_sell']
                 if amounts_new['x_profit'] >= 0:
                     break
-                amounts_new['x_sell'] -= self.symbols_info[xy]['amount_step']
-                if amounts_new['x_sell'] < self.symbols_info[xy]['min_amount']:
+                amounts_new['x_sell'] -= self.symbols_filters[xy]['amount_step']
+                if amounts_new['x_sell'] < self.symbols_filters[xy]['min_amount']:
                     return None
             # make sure y_profit >= 0
             while True:
                 amounts_new['y_profit'] = amounts['y'] * amounts_new['x_sell'] / amounts['x_sell'] - amounts_new['y']
                 if amounts_new['y_profit'] >= 0:
                     break
-                amounts_new['y'] -= self.symbols_info[yz]['amount_step']
-                if amounts_new['y'] < self.symbols_info[yz]['min_amount']:
+                amounts_new['y'] -= self.symbols_filters[yz]['amount_step']
+                if amounts_new['y'] < self.symbols_filters[yz]['min_amount']:
                     return None
             # recalculate z_spend and z_profit with new amounts
             amounts_new['z_spend'] = amounts_new['x_buy'] / amounts['x_buy'] * amounts['z_spend']
@@ -274,16 +274,16 @@ class ArbitrageDetector(QThread):
                 amounts_new['y_profit'] = amounts_new['y'] * (1 - self.fee) - amounts['y'] * amounts_new['x_buy'] / amounts['x_buy']
                 if amounts_new['y_profit'] >= 0:
                     break
-                amounts_new['x_buy'] -= self.symbols_info[xy]['amount_step']
-                if amounts_new['x_buy'] < self.symbols_info[xy]['min_amount']:
+                amounts_new['x_buy'] -= self.symbols_filters[xy]['amount_step']
+                if amounts_new['x_buy'] < self.symbols_filters[xy]['min_amount']:
                     return None
             # make sure x_profit >= 0
             while True:
                 amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self.fee) - amounts_new['x_sell']
                 if amounts_new['x_profit'] >= 0:
                     break
-                amounts_new['x_sell'] -= self.symbols_info[xz]['amount_step']
-                if amounts_new['x_sell'] < self.symbols_info[xz]['min_amount']:
+                amounts_new['x_sell'] -= self.symbols_filters[xz]['amount_step']
+                if amounts_new['x_sell'] < self.symbols_filters[xz]['min_amount']:
                     return None
             # recalculate z_spend and z_profit with new amounts
             amounts_new['z_spend'] = amounts_new['y'] / amounts['y'] * amounts['z_spend']
