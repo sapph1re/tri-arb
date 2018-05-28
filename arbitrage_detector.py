@@ -73,14 +73,15 @@ class ArbitrageDetector(QThread):
         logger.debug('Symbols: {}', self.symbols)
 
         # load order amount requirements
+        self.symbols_filters = {}
         for symbol in self.symbols:
-            for sym_filter in self.symbols_info[symbol]['filters']:
-                if sym_filter['filterType'] == 'LOT_SIZE':
-                    self.symbols_info[symbol]['min_amount'] = Decimal(sym_filter['minQty'])
-                    self.symbols_info[symbol]['max_amount'] = Decimal(sym_filter['maxQty'])
-                    self.symbols_info[symbol]['amount_step'] = Decimal(sym_filter['stepSize'])
-                if sym_filter['filterType'] == 'MIN_NOTIONAL':
-                    self.symbols_info[symbol]['min_notional'] = Decimal(sym_filter['minNotional'])
+            qty_filter = self.symbols_info[symbol].get_qty_filter()
+            self.symbols_filters[symbol] = {
+                'min_amount': Decimal(qty_filter[0]),
+                'max_amount': Decimal(qty_filter[1]),
+                'amount_step': Decimal(qty_filter[2]),
+                'min_notional': Decimal(self.symbols_info[symbol].get_min_notional())
+            }
 
         # start watching the orderbooks
         self.threads = []
@@ -188,21 +189,35 @@ class ArbitrageDetector(QThread):
             amount_x_sell = amount_x
         return amount_y, amount_x_buy, amount_x_sell
 
-    def normalize_amounts(self, amounts, amounts_to_symbols, prices):
+    def normalize_amounts(self, amounts: Dict[str, Decimal], amounts_to_symbols: Dict[str, str], prices: Dict[str, Decimal]):
+        """
+        Changes the amounts to fit into order amount requirements.
+
+        :param amounts: {y, x_buy, x_sell}  Raw order amounts.
+        :param amounts_to_symbols: {'y': symbol, 'x_buy': symbol, 'x_sell': symbol}
+            Mapping to indicate on which symbol you perform a corresponding operation.
+        :param prices: {symbol: price, symbol: price, symbol: price}
+            Order prices, for each symbol
+        :return: {y, x_buy, x_sell} Normalized order amounts
+        """
         amounts_new = {}
         for amount_type, symbol in amounts_to_symbols.items():
-            # make sure that min_amount <= order amount <= max_amount
-            if amounts[amount_type] < self.symbols_info[symbol]['min_amount']:
+            # check that we have all symbols info
+            if symbol not in self.symbols_filters:
+                logger.warning('Missing {} symbol filters. Normalization failed.', symbol)
                 return None
-            elif amounts[amount_type] > self.symbols_info[symbol]['max_amount']:
-                amounts_new[amount_type] = self.symbols_info[symbol]['max_amount']
+            # make sure that min_amount <= order amount <= max_amount
+            if amounts[amount_type] < self.symbols_filters[symbol]['min_amount']:
+                return None
+            elif amounts[amount_type] > self.symbols_filters[symbol]['max_amount']:
+                amounts_new[amount_type] = self.symbols_filters[symbol]['max_amount']
             else:
                 # round order amount precision to amount_step
                 amounts_new[amount_type] = amounts[amount_type].quantize(
-                    self.symbols_info[symbol]['amount_step'], rounding=ROUND_DOWN
+                    self.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
                 )
             # check that amount * price >= min_notional
-            if amounts_new[amount_type] * prices[symbol] < self.symbols_info[symbol]['min_notional']:
+            if amounts_new[amount_type] * prices[symbol] < self.symbols_filters[symbol]['min_notional']:
                 return None  # amount is too little
         return amounts_new
 
@@ -210,9 +225,10 @@ class ArbitrageDetector(QThread):
         self,
         symbols: Tuple[str, str, str], direction: str,
         amounts: Dict[str, Decimal], prices: Tuple[Decimal, Decimal, Decimal]
-    ) -> Dict[str: Decimal] or None:
+    ) -> Dict[str, Decimal] or None:
         """
         Takes arbitrage amounts and normalizes them to comply with correct order amounts on the exchange.
+        Recalculates the resulting amounts to still maintain a proper arbitrage.
 
         :param symbols: (YZ, XZ, XY) tuple of symbols we're trading at, e.g. ('ETHBTC', 'EOSBTC', 'EOSETH')
         :param direction: 'sell buy sell' or 'buy sell buy'
@@ -224,12 +240,6 @@ class ArbitrageDetector(QThread):
         """
         yz, xz, xy = symbols
         prices = {yz: prices[0], xz: prices[1], xy: prices[2]}
-        # check that we have all symbols info
-        for symbol in symbols:
-            for field in ['min_amount', 'max_amount', 'amount_step', 'min_notional']:
-                if field not in self.symbols_info[symbol]:
-                    logger.warning('Missing {} symbol info ({}). Normalization failed.', symbol, field)
-                    return None
         z_got = amounts['z_spend'] + amounts['z_profit']
         # normalize amounts to comply with min/max order amounts and min amount step
         if direction == 'sell buy sell':
@@ -481,21 +491,21 @@ class ArbitrageDetector(QThread):
 
 if __name__ == '__main__':
     logger.info('Starting...')
+    app = QCoreApplication(sys.argv)
     api = BinanceApi(API_KEY, API_SECRET)
     symbols_info = api.get_symbols_info()
-    symbols_info_slice = {}
-    i = 0
-    for symbol, symbol_info in symbols_info.items():
-        symbols_info_slice[symbol] = symbol_info
-        i += 1
-        if i >= 20:
-            break
-    logger.debug('All Symbols Info: {}', symbols_info_slice)
+    # symbols_info_slice = {}
+    # i = 0
+    # for symbol, symbol_info in symbols_info.items():
+    #     symbols_info_slice[symbol] = symbol_info
+    #     i += 1
+    #     if i >= 20:
+    #         break
+    logger.debug('All Symbols Info: {}', symbols_info)
     detector = ArbitrageDetector(
         api=api,
-        symbols_info=symbols_info_slice,
+        symbols_info=symbols_info,
         fee=TRADE_FEE,
         min_profit=MIN_PROFIT
     )
-    app = QCoreApplication(sys.argv)
     sys.exit(app.exec_())
