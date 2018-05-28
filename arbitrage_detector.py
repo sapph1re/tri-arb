@@ -38,7 +38,7 @@ class Arbitrage:
 
     def __str__(self):
         actions_str = ' -> '.join([str(action) for action in self.actions])
-        return '{}, trade amount: {} {}, profit: +{} {} ({}%), +{} {}, +{} {}'.format(
+        return '{}, trade amount: {} {}, profit: +{} {} (+{}%), +{} {}, +{} {}'.format(
             actions_str, self.amount_z, self.currency_z, self.profit_z, self.currency_z, self.profit_z_rel * 100,
             self.profit_x, self.currency_x, self.profit_y, self.currency_y
         )
@@ -77,10 +77,10 @@ class ArbitrageDetector(QThread):
         for symbol in self.symbols:
             qty_filter = self.symbols_info[symbol].get_qty_filter()
             self.symbols_filters[symbol] = {
-                'min_amount': Decimal(qty_filter[0]),
-                'max_amount': Decimal(qty_filter[1]),
-                'amount_step': Decimal(qty_filter[2]),
-                'min_notional': Decimal(self.symbols_info[symbol].get_min_notional())
+                'min_amount': Decimal(qty_filter[0]).normalize(),
+                'max_amount': Decimal(qty_filter[1]).normalize(),
+                'amount_step': Decimal(qty_filter[2]).normalize(),
+                'min_notional': Decimal(self.symbols_info[symbol].get_min_notional()).normalize()
             }
 
         # start watching the orderbooks
@@ -398,7 +398,7 @@ class ArbitrageDetector(QThread):
                     currency_z=currency_z,
                     amount_z=normalized['z_spend'],
                     profit_z=normalized['z_profit'],
-                    profit_z_rel=normalized['z_profit_rel'],
+                    profit_z_rel=normalized['profit_rel'],
                     profit_y=normalized['y_profit'],
                     currency_y=currency_y,
                     profit_x=normalized['x_profit'],
@@ -465,7 +465,7 @@ class ArbitrageDetector(QThread):
                     currency_z=currency_z,
                     amount_z=normalized['z_spend'],
                     profit_z=normalized['z_profit'],
-                    profit_z_rel=normalized['z_profit_rel'],
+                    profit_z_rel=normalized['profit_rel'],
                     profit_y=normalized['y_profit'],
                     currency_y=currency_y,
                     profit_x=normalized['x_profit'],
