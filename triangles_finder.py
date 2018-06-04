@@ -112,15 +112,15 @@ class TrianglesFinder:
                 if ((base1 in quote_dict) and (base2 in base_dict) and
                         (c1 in quote_dict[base1]) and (c1 in base_dict[base2])):
                     triangles.add(
-                        ((base2, quote),
-                         (base1, quote),
+                        ((base1, quote),
+                         (base2, quote),
                          (base2, base1))
                     )
                 elif ((base2 in quote_dict) and (base1 in base_dict) and
                       (c2 in quote_dict[base2]) and (c2 in base_dict[base1])):
                     triangles.add(
-                        ((base1, quote),
-                         (base2, quote),
+                        ((base2, quote),
+                         (base1, quote),
                          (base1, base2))
                     )
         return triangles
@@ -154,8 +154,8 @@ class TrianglesFinder:
                 if ((base2 in quote_dict) and (base1 in base_dict) and
                         (c in quote_dict[base2]) and (c in base_dict[base1])):
                     triangles.add(
-                        ((base1, quote),
-                         (base2, quote),
+                        ((base2, quote),
+                         (base1, quote),
                          (base1, base2))
                     )
         return triangles

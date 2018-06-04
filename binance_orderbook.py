@@ -1,11 +1,9 @@
 import sys
-import ssl
-import websocket
 import json
-import gevent
 import time
-from decimal import *
-
+from sortedcontainers import SortedSet
+from operator import neg
+from decimal import Decimal
 from PyQt5.QtCore import (QCoreApplication, QThread,
                           QObject, pyqtSignal)
 
@@ -18,6 +16,7 @@ logger = get_logger(__name__)
 
 
 class BinanceOrderBook(QObject):
+
     ob_updated = pyqtSignal(str)
 
     def __init__(self, api: BinanceApi, base: str, quote: str,
@@ -38,6 +37,12 @@ class BinanceOrderBook(QObject):
         self.__lastUpdateId = 0
         self.__bids = {}
         self.__asks = {}
+        self.__bids_prices = SortedSet(key=neg)
+        self.__asks_prices = SortedSet()
+        self.__bids_list_cached = []
+        self.__asks_list_cached = []
+        self.__bids_changed = False
+        self.__asks_changed = False
         self.__start_time = time.time()
         self.__timeout = reinit_timeout  # in seconds
 
@@ -51,10 +56,16 @@ class BinanceOrderBook(QObject):
         return self.__symbol
 
     def get_bids(self) -> list:
-        return self.__sorted_copy(self.__bids)[::-1]
+        if self.__bids_changed:
+            self.__bids_list_cached = [(price, self.__bids[price]) for price in self.__bids_prices]
+            self.__bids_changed = False
+        return self.__bids_list_cached.copy()
 
     def get_asks(self) -> list:
-        return self.__sorted_copy(self.__asks)
+        if self.__asks_changed:
+            self.__asks_list_cached = [(price, self.__asks[price]) for price in self.__asks_prices]
+            self.__asks_changed = False
+        return self.__asks_list_cached.copy()
 
     def set_websocket(self, ws: BinanceDepthWebsocket):
         self.remove_websocket()
@@ -90,7 +101,6 @@ class BinanceOrderBook(QObject):
             self.__start_time = time.time()
         else:
             logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
-            gevent.sleep(1)
             self.init_order_book()
         del snapshot
 
@@ -145,28 +155,35 @@ class BinanceOrderBook(QObject):
 
     def __update_bids(self, bids_list):
         for each in bids_list:
-            zero_flag = self.__is_str_zero(each[1])
-            if zero_flag and (each[0] in self.__bids):
-                self.__bids.pop(each[0])
-            elif not zero_flag:
-                self.__bids[each[0]] = each[1]
+            price = Decimal(each[0])
+            if self.__is_str_zero(each[1]):
+                try:
+                    del self.__bids[price]
+                except KeyError:
+                    pass
+                self.__bids_prices.discard(price)
+            else:
+                self.__bids[price] = Decimal(each[1])
+                if price not in self.__bids_prices:
+                    self.__bids_prices.add(price)
+        self.__bids_changed = True
+        # print('__update_bids() took {:0.3f} µs'.format((time.time() - t)*1000000))
 
     def __update_asks(self, asks_list):
         for each in asks_list:
-            zero_flag = self.__is_str_zero(each[1])
-            if zero_flag and (each[0] in self.__asks):
-                self.__asks.pop(each[0])
-            elif not zero_flag:
-                self.__asks[each[0]] = each[1]
-
-    @staticmethod
-    def __sorted_copy(dictionary: dict):
-        dct = dictionary.copy()
-        try:
-            res = [(Decimal(key), Decimal(dct[key])) for key in sorted(dct.keys())]
-        except ValueError:
-            return None
-        return res
+            price = Decimal(each[0])
+            if self.__is_str_zero(each[1]):
+                try:
+                    del self.__asks[price]
+                except KeyError:
+                    pass
+                self.__asks_prices.discard(price)
+            else:
+                self.__asks[price] = Decimal(each[1])
+                if price not in self.__asks_prices:
+                    self.__asks_prices.add(price)
+        self.__asks_changed = True
+        # print('__update_asks() took {:0.3f} µs'.format((time.time() - t)*1000000))
 
     def test_load_snapshot(self, filename):
         with open(filename, 'r') as fp:

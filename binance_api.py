@@ -708,6 +708,7 @@ class BinanceApi:
 
         response = requests.request(method=self.methods[command]['method'], url=api_url,
                                     data="" if self.methods[command]['method'] == 'GET' else payload, headers=headers)
+        # print('BAPI > Method <{}> takes {:.3f} ms'.format(command, response.elapsed.total_seconds() * 1000))
         return response.json()
 
     def get_symbols_info_json(self) -> List[dict]:
@@ -784,6 +785,10 @@ if __name__ == '__main__':
     from config import API_KEY, API_SECRET
 
     bot = BinanceApi(API_KEY, API_SECRET)
+    # for _ in range(100):
+    #     bot.ping()
+    #     time.sleep(1)
+
     print_dict('ping', bot.ping())
     print_dict('time', bot.time())
     print_dict('exchangeInfo', bot.exchangeInfo())
