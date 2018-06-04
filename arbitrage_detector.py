@@ -1,7 +1,6 @@
 import sys
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from copy import deepcopy
 from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
@@ -195,6 +194,31 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             raise Exception('Bad calculation!')
         return amount_y, amount_x_buy, amount_x_sell
 
+    @staticmethod
+    def calculate_counter_amount(amount: Decimal, orderbook: List[Tuple[Decimal, Decimal]]) -> Tuple[Decimal, Decimal]:
+        """
+        Goes through the orderbook and calculates the amount of counter currency.
+
+        :param amount: amount to sell or buy on the given orderbook
+        :param orderbook: [(price, amount), (price, amount), ...] the orderbook in the needed direction
+        :return: amount of counter currency (fee not counted)
+        """
+        counter_amount = Decimal(0)
+        amount_left = amount
+        for level_price, level_amount in orderbook:
+            if amount_left > level_amount:
+                trade_amount = level_amount
+            else:
+                trade_amount = amount_left
+            counter_amount += level_price * trade_amount
+            amount_left -= trade_amount
+            if amount_left <= 0:
+                break
+        if amount_left < 0:
+            logger.critical('calculate_counter_amount() is bad: amount_left is negative: {}', amount_left)
+            raise Exception('Critical calculation error')
+        return counter_amount
+
     def normalize_amounts(self, amounts: Dict[str, Decimal], amounts_to_symbols: Dict[str, str], prices: Dict[str, Decimal]):
         """
         Changes the amounts to fit into order amount requirements.
@@ -255,7 +279,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             if amounts_new is None:
                 return None
             # make sure x_profit >= 0
-            while True:
+            while 1:
                 amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self.fee) - amounts_new['x_sell']
                 if amounts_new['x_profit'] >= 0:
                     break
@@ -263,7 +287,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
                 if amounts_new['x_sell'] < self.symbols_filters[xy]['min_amount']:
                     return None
             # make sure y_profit >= 0
-            while True:
+            while 1:
                 y_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xy]) * (1 - self.fee)
                 y_spend = amounts_new['y']
                 amounts_new['y_profit'] = y_got - y_spend
@@ -281,7 +305,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             if amounts_new is None:
                 return None
             # make sure y_profit >= 0
-            while True:
+            while 1:
                 y_got = amounts_new['y'] * (1 - self.fee)
                 y_spend = self.calculate_counter_amount(amounts_new['x_buy'], orderbooks[xy])
                 amounts_new['y_profit'] = y_got - y_spend
@@ -291,7 +315,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
                 if amounts_new['x_buy'] < self.symbols_filters[xy]['min_amount']:
                     return None
             # make sure x_profit >= 0
-            while True:
+            while 1:
                 amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self.fee) - amounts_new['x_sell']
                 if amounts_new['x_profit'] >= 0:
                     break
@@ -313,31 +337,6 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             return None
         return amounts_new
 
-    @staticmethod
-    def calculate_counter_amount(amount: Decimal, orderbook: List[Tuple[Decimal, Decimal]]) -> Tuple[Decimal, Decimal]:
-        """
-        Goes through the orderbook and calculates the amount of counter currency.
-
-        :param amount: amount to sell or buy on the given orderbook
-        :param orderbook: [(price, amount), (price, amount), ...] the orderbook in the needed direction
-        :return: amount of counter currency (fee not counted)
-        """
-        counter_amount = Decimal(0)
-        amount_left = amount
-        for level_price, level_amount in orderbook:
-            if amount_left > level_amount:
-                trade_amount = level_amount
-            else:
-                trade_amount = amount_left
-            counter_amount += level_price * trade_amount
-            amount_left -= trade_amount
-            if amount_left <= 0:
-                break
-        if amount_left < 0:
-            logger.critical('calculate_counter_amount() is bad: amount_left is negative: {}', amount_left)
-            raise Exception('Critical calculation error')
-        return counter_amount
-
     def find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
         """
         Looks for arbitrage in the triangle: Y/Z, X/Z, X/Y.
@@ -347,9 +346,9 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
         :param triangle: ((Y, Z), (X, Z), (X, Y)) example: (('ETH', 'BTC'), ('EOS', 'BTC'), ('EOS', 'ETH'))
         :return: Arbitrage instance or None
         """
-        yz = triangle[0][0]+triangle[0][1]
-        xz = triangle[1][0]+triangle[1][1]
-        xy = triangle[2][0]+triangle[2][1]
+        yz = triangle[0][0] + triangle[0][1]
+        xz = triangle[1][0] + triangle[1][1]
+        xy = triangle[2][0] + triangle[2][1]
         currency_z = triangle[0][1]
         currency_x = triangle[1][0]
         currency_y = triangle[0][0]
@@ -371,12 +370,12 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             'xz': self.orderbooks[xz].get_asks(),
             'xy': self.orderbooks[xy].get_asks()
         }
-        bids_saved = deepcopy(bids)
-        asks_saved = deepcopy(asks)
+        bids_saved = {'yz': bids['yz'].copy(), 'xz': bids['xz'].copy(), 'xy': bids['xy'].copy()}
+        asks_saved = {'yz': asks['yz'].copy(), 'xz': asks['xz'].copy(), 'xy': asks['xy'].copy()}
         # checking that orderbooks are not empty
         for side in [bids, asks]:
             for pair in side:
-                if len(side[pair]) == 0:
+                if not side[pair]:
                     logger.debug('Orderbooks are not ready yet')
                     return None
         # checking triangle in one direction: sell Y/Z, buy X/Z, sell X/Y
@@ -386,7 +385,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
         amount_z_spend_total = Decimal(0)
         profit_z_total = Decimal(0)
         prices = None
-        while True:
+        while 1:
             # check profitability
             profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
             if profit_rel < self.min_profit:
@@ -411,8 +410,8 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             for ob in [bids['yz'], asks['xz'], bids['xy']]:
                 if ob[0][1] < 0:
                     raise Exception('Critical calculation error')
-                if ob[0][1] == 0:
-                    ob.pop(0)
+                if not ob[0][1]:
+                    del ob[0]
         if prices is not None:  # potential arbitrage exists
             orderbooks = (bids_saved['yz'], asks_saved['xz'], bids_saved['xy'])
             # make amounts comply with order size requirements
@@ -430,8 +429,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
                 orderbooks=orderbooks
             )
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
-                if not self.existing_arbitrages[pairs]['sell buy sell']:
-                    self.existing_arbitrages[pairs]['sell buy sell'] = True
+                self.existing_arbitrages[pairs]['sell buy sell'] = True
                 return Arbitrage(
                     actions=[
                         MarketAction(triangle[0], 'sell', prices['yz'], normalized['y']),
@@ -456,7 +454,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
         amount_z_spend_total = Decimal(0)
         profit_z_total = Decimal(0)
         prices = None
-        while True:
+        while 1:
             # check profitability
             profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
             if profit_rel < self.min_profit:
@@ -481,8 +479,8 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             for ob in [asks['yz'], bids['xz'], asks['xy']]:
                 if ob[0][1] < 0:
                     raise Exception('Critical calculation error')
-                if ob[0][1] == 0:
-                    ob.pop(0)
+                if not ob[0][1]:
+                    del ob[0]
         if prices is not None:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
@@ -500,8 +498,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
                 orderbooks=orderbooks
             )
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
-                if not self.existing_arbitrages[pairs]['buy sell buy']:
-                    self.existing_arbitrages[pairs]['buy sell buy'] = True
+                self.existing_arbitrages[pairs]['buy sell buy'] = True
                 return Arbitrage(
                     actions=[
                         MarketAction(triangle[0], 'buy', prices['yz'], normalized['y']),
@@ -528,12 +525,13 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
         return None
 
     def on_orderbook_updated(self, symbol: str):
-        if symbol not in self.symbols:
+        try:
+            for triangle in self.symbols[symbol]['triangles']:
+                arbitrage = self.find_arbitrage_in_triangle(triangle)
+                if arbitrage is not None:
+                    self.report_arbitrage(arbitrage)
+        except KeyError:
             return
-        for triangle in self.symbols[symbol]['triangles']:
-            arbitrage = self.find_arbitrage_in_triangle(triangle)
-            if arbitrage is not None:
-                self.report_arbitrage(arbitrage)
 
 
 if __name__ == '__main__':
