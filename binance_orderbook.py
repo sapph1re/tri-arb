@@ -1,11 +1,8 @@
 import sys
-import ssl
-import websocket
 import json
-import gevent
 import time
-from decimal import *
 
+from decimal import Decimal
 from PyQt5.QtCore import (QCoreApplication, QThread,
                           QObject, pyqtSignal)
 
@@ -18,6 +15,7 @@ logger = get_logger(__name__)
 
 
 class BinanceOrderBook(QObject):
+
     ob_updated = pyqtSignal(str)
 
     def __init__(self, api: BinanceApi, base: str, quote: str,
@@ -90,7 +88,6 @@ class BinanceOrderBook(QObject):
             self.__start_time = time.time()
         else:
             logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
-            gevent.sleep(1)
             self.init_order_book()
         del snapshot
 
