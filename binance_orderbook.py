@@ -31,6 +31,7 @@ class BinanceOrderBook(QObject):
         if self.__websocket:
             self.__websocket.add_symbol(self.__symbol)
             self.__websocket.symbol_updated.connect(self.update_orderbook)
+            self.__websocket.disconnected.connect(self.__on_ws_disconnected)
 
         self.__lastUpdateId = 0
         self.__bids = {}
@@ -43,9 +44,16 @@ class BinanceOrderBook(QObject):
         self.__asks_changed = False
 
         self.__initializing = False
+        self.__valid = False
 
         self.__start_time = time.time()
         self.__timeout = reinit_timeout  # in seconds
+
+    def is_valid(self) -> bool:
+        return self.__valid
+
+    def __on_ws_disconnected(self):
+        self.__valid = False
 
     def get_base(self) -> str:
         return self.__base
@@ -113,6 +121,7 @@ class BinanceOrderBook(QObject):
             snapshot = json.loads(response)
             if self.__parse_snapshot(snapshot):
                 logger.info('OB {} > Initialized OB'.format(self.__symbol))
+                self.__valid = True
                 self.ob_updated.emit(self.__symbol)
                 self.__start_time = time.time()
                 self.__initializing = False
@@ -242,13 +251,13 @@ def _main():
             th = QThread()
             threads.append(th)
 
-            ws = BinanceDepthWebsocket()
+            ws = BinanceDepthWebsocket(parent=th)
             ws.moveToThread(th)
             websockets.append(ws)
 
             i = 0
 
-        ob = BinanceOrderBook(api, each[0], each[1], ws)
+        ob = BinanceOrderBook(api, each[0], each[1], ws, parent=th)
         ob.moveToThread(th)
         order_books.append(ob)
 
