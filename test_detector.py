@@ -9,6 +9,7 @@ logger = get_logger(__name__)
 
 
 symbols_info = {}
+api = BinanceApi(API_KEY, API_SECRET)
 
 
 def calculate_counter_amount(amount, price, orderbook):
@@ -25,7 +26,7 @@ def calculate_counter_amount(amount, price, orderbook):
             break
     if level_price != price:
         logger.error('Order price {} is not equal to the deepest trade price {}', price, level_price)
-        return None
+        # return None
     return counter_amount
 
 
@@ -33,6 +34,9 @@ def verify_arbitrage_math(arbitrage):
     check_failed = False
     profits = {}
     z_spend = Decimal(0)
+    orderbooks_actual = {}
+    profits_actual = {}
+    z_spend_actual = Decimal(0)
     i = 0
     for action in arbitrage.actions:
         symbol = action.pair[0]+action.pair[1]
@@ -71,20 +75,33 @@ def verify_arbitrage_math(arbitrage):
             break
         # checking arbitrage calculations
         counter_amount = calculate_counter_amount(action.amount, action.price, arbitrage.orderbooks[i])
+        depth = api.depth(symbol=symbol, limit=100)
+        if action.action == 'sell':
+            side = 'bids'
+        elif action.action == 'buy':
+            side = 'asks'
+        orderbooks_actual[symbol] = [(Decimal(price), Decimal(value)) for price, value, dummy in depth[side]]
+        counter_amount_actual = calculate_counter_amount(action.amount, action.price, orderbooks_actual[symbol])
         if counter_amount is None:
             check_failed = True
             break
         for j in [0, 1]:
             if action.pair[j] not in profits:
                 profits[action.pair[j]] = Decimal(0)
+                profits_actual[action.pair[j]] = Decimal(0)
         if action.action == 'sell':
             profits[action.pair[0]] -= action.amount
             profits[action.pair[1]] += counter_amount * (1 - TRADE_FEE)
+            profits_actual[action.pair[0]] -= action.amount
+            profits_actual[action.pair[1]] += counter_amount_actual * (1 - TRADE_FEE)
         elif action.action == 'buy':
             profits[action.pair[0]] += action.amount * (1 - TRADE_FEE)
             profits[action.pair[1]] -= counter_amount
+            profits_actual[action.pair[0]] += action.amount * (1 - TRADE_FEE)
+            profits_actual[action.pair[1]] -= counter_amount_actual
             if action.pair[1] == arbitrage.currency_z:
                 z_spend += counter_amount
+                z_spend_actual += counter_amount_actual
         i += 1
     if not check_failed:
         # checking final profits
@@ -111,6 +128,12 @@ def verify_arbitrage_math(arbitrage):
                 if profit_rel < MIN_PROFIT:
                     logger.error('Profit {}% is less than min_profit {}%', profit_rel*100, MIN_PROFIT*100)
                     check_failed = True
+        # checking actual profits
+        for currency, profit_actual in profits_actual.items():
+            if profit_actual < 0:
+                logger.error('Actual profit {} is negative: {}', currency, profit_actual)
+                check_failed = True
+            logger.info('Actual profit:    {:.6f} {}    Expected profit: {:.6f} {}', profit_actual, currency, profits[currency], currency)
     if check_failed:
         logger.info('Arbitrage: {}. Orderbooks: {}', arbitrage, arbitrage.orderbooks)
     else:
@@ -120,7 +143,6 @@ def verify_arbitrage_math(arbitrage):
 if __name__ == '__main__':
     logger.info('Starting...')
     app = QCoreApplication(sys.argv)
-    api = BinanceApi(API_KEY, API_SECRET)
     symbols_info = api.get_symbols_info()
     logger.debug('All Symbols Info: {}', symbols_info)
     detector = ArbitrageDetector(
