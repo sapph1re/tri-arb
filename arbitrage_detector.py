@@ -96,12 +96,12 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             if i >= 50:
                 th = QThread()
                 self.threads.append(th)
-                ws = BinanceDepthWebsocket()
+                ws = BinanceDepthWebsocket(parent=th)
                 ws.moveToThread(th)
                 self.websockets.append(ws)
                 i = 0
             # starting an orderbook watcher for every symbol
-            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
+            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws, parent=th)
             ob.moveToThread(th)
             ob.ob_updated.connect(self.on_orderbook_updated)
             self.orderbooks[symbol] = ob
@@ -360,6 +360,10 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             if actions not in self.existing_arbitrages[pairs]:
                 self.existing_arbitrages[pairs][actions] = False
         # getting orderbooks
+        for symbol in [yz, xz, xy]:
+            if not self.orderbooks[symbol].is_valid():
+                    logger.debug('Orderbooks are not valid right now')
+                    return None
         bids = {
             'yz': self.orderbooks[yz].get_bids(),
             'xz': self.orderbooks[xz].get_bids(),
@@ -376,7 +380,7 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
         for side in [bids, asks]:
             for pair in side:
                 if not side[pair]:
-                    logger.debug('Orderbooks are not ready yet')
+                    logger.debug('Orderbooks are empty (not ready yet?)')
                     return None
         # checking triangle in one direction: sell Y/Z, buy X/Z, sell X/Y
         amount_x_buy_total = Decimal(0)

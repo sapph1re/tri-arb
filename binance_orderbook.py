@@ -1,16 +1,14 @@
-import sys
 import json
 import time
 from sortedcontainers import SortedSet
 from operator import neg
 from decimal import Decimal
-from PyQt5.QtCore import (QCoreApplication, QThread,
-                          QObject, pyqtSignal)
+from PyQt5.QtCore import (QObject, pyqtSignal)
 
 from binance_api import BinanceApi
 from binance_depth_websocket import BinanceDepthWebsocket
-from config import API_KEY, API_SECRET
 from custom_logging import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -33,6 +31,7 @@ class BinanceOrderBook(QObject):
         if self.__websocket:
             self.__websocket.add_symbol(self.__symbol)
             self.__websocket.symbol_updated.connect(self.update_orderbook)
+            self.__websocket.disconnected.connect(self.__on_ws_disconnected)
 
         self.__lastUpdateId = 0
         self.__bids = {}
@@ -43,8 +42,18 @@ class BinanceOrderBook(QObject):
         self.__asks_list_cached = []
         self.__bids_changed = False
         self.__asks_changed = False
+
+        self.__initializing = False
+        self.__valid = False
+
         self.__start_time = time.time()
         self.__timeout = reinit_timeout  # in seconds
+
+    def is_valid(self) -> bool:
+        return self.__valid
+
+    def __on_ws_disconnected(self):
+        self.__valid = False
 
     def get_base(self) -> str:
         return self.__base
@@ -94,18 +103,37 @@ class BinanceOrderBook(QObject):
             json.dump(data, fp, indent=2, ensure_ascii=False)
 
     def init_order_book(self):
-        snapshot = self.__api.depth(symbol=self.__symbol, limit=100)
-        if self.__parse_snapshot(snapshot):
-            logger.info('OB {} > Initialized OB'.format(self.__symbol))
-            self.ob_updated.emit(self.__symbol)
-            self.__start_time = time.time()
-        else:
-            logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
-            self.init_order_book()
-        del snapshot
+        if self.__initializing:
+            return
+
+        self.__initializing = True
+        self.__api.depth(slot=self.init_ob_slot, symbol=self.__symbol, limit=100)
+
+    def init_ob_slot(self):
+        # TODO: think about this try-except later
+        try:
+            reply = self.sender()
+            response = bytes(reply.readAll()).decode("utf-8")
+
+            if not response:
+                return
+
+            snapshot = json.loads(response)
+            if self.__parse_snapshot(snapshot):
+                logger.info('OB {} > Initialized OB'.format(self.__symbol))
+                self.__valid = True
+                self.ob_updated.emit(self.__symbol)
+                self.__start_time = time.time()
+                self.__initializing = False
+            else:
+                logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
+                self.__initializing = False
+                self.init_order_book()
+        except Exception as e:
+            logger.exception('OB {} > INIT EXCEPTION: {}'.format(self.__symbol, str(e)))
 
     def update_orderbook(self, update: dict):
-        if not update or update['s'] != self.__symbol:
+        if self.__initializing or (not update) or (update['s'] != self.__symbol):
             return
 
         from_id = update['U']
@@ -196,16 +224,19 @@ class BinanceOrderBook(QObject):
         self.update_orderbook(data)
 
 
-class _TestUpdateReceiver(QObject):
+class _SelfTestReceiver(QObject):
 
     @staticmethod
     def update_reciever(symbol: str):
         print('UR > Update signal is received! ### {}'.format(symbol))
 
 
-if __name__ == '__main__':
-    app = QCoreApplication(sys.argv)
+def _main():
+    import sys
+    from PyQt5.QtCore import QCoreApplication, QThread
+    from config import API_KEY, API_SECRET
 
+    app = QCoreApplication(sys.argv)
     api = BinanceApi(API_KEY, API_SECRET)
 
     symbols_dict = api.get_symbols_info()
@@ -220,13 +251,13 @@ if __name__ == '__main__':
             th = QThread()
             threads.append(th)
 
-            ws = BinanceDepthWebsocket()
+            ws = BinanceDepthWebsocket(parent=th)
             ws.moveToThread(th)
             websockets.append(ws)
 
             i = 0
 
-        ob = BinanceOrderBook(api, each[0], each[1], ws)
+        ob = BinanceOrderBook(api, each[0], each[1], ws, parent=th)
         ob.moveToThread(th)
         order_books.append(ob)
 
@@ -249,3 +280,7 @@ if __name__ == '__main__':
     # ob2.ob_updated.connect(ur.update_reciever)
 
     sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    _main()
