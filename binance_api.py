@@ -1,11 +1,16 @@
+import sys
 import time
-import urllib
 import hmac
 import hashlib
-import requests
+import urllib.parse
+import json
+from typing import List, Dict, Callable
+from PyQt5.QtCore import (QObject, QByteArray, QUrl, QEventLoop)
+from PyQt5.QtNetwork import (QNetworkAccessManager, QNetworkRequest, QNetworkReply)
+from custom_logging import get_logger
 
-from typing import List, Dict
-from urllib.parse import urlparse
+
+logger = get_logger(__name__)
 
 
 class BinanceSymbolInfo:
@@ -129,7 +134,7 @@ class BinanceSymbolInfo:
         return self.__min_notional
 
 
-class BinanceApi:
+class BinanceApi(QObject):
     """
     Более подробная информация: https://bablofil.ru/binance-api/
 
@@ -164,17 +169,20 @@ class BinanceApi:
     }
 
     def __init__(self, api_key, api_secret):
+        super(BinanceApi, self).__init__()
         self.api_key = api_key
         self.api_secret = bytearray(api_secret, encoding='utf-8')
+        self.__q_nam = QNetworkAccessManager()
 
-    # def __getattr__(self, name):
-    #     def wrapper(*args, **kwargs):
-    #         kwargs.update(command=name)
-    #         return self.call_api(**kwargs)
-    #
-    #     return wrapper
+        self.__time_delta = 0
+        time_response = self.time()
+        try:
+            server_time = time_response['serverTime']
+            self.__time_delta = int(server_time - time.time() * 1000)
+        except LookupError as e:
+            logger.info('BAPI > Time synchronization got BAD response: {}'.format(str(e)))
 
-    def ping(self):
+    def ping(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Проверка связи - /api/v1/ping
         Метод для проверки работы API.
@@ -184,9 +192,9 @@ class BinanceApi:
         :return: пустой словарь в случае успеха.
         {}
         """
-        return self.__call_api(command='ping')
+        return self.__call_api(slot=slot, command='ping')
 
-    def time(self):
+    def time(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Получение времени биржи - /api/v1/time
 
@@ -194,9 +202,9 @@ class BinanceApi:
 
         :return: словарь с текущим временем.
         """
-        return self.__call_api(command='time')
+        return self.__call_api(slot=slot, command='time')
 
-    def exchangeInfo(self):
+    def exchangeInfo(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Настройки и лимиты биржи - /api/v1/exchangeInfo
 
@@ -204,9 +212,9 @@ class BinanceApi:
 
         :return: структура данных в словаре
         """
-        return self.__call_api(command='exchangeInfo')
+        return self.__call_api(slot=slot, command='exchangeInfo')
 
-    def depth(self, symbol: str, limit: int = 100):
+    def depth(self, symbol: str, limit: int = 100, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Открытые ордера на бирже - /api/v1/depth
         Метод позволяет получить книгу ордеров.
@@ -224,9 +232,9 @@ class BinanceApi:
 
         :return: значения в словаре
         """
-        return self.__call_api(command='depth', symbol=symbol.upper(), limit=limit)
+        return self.__call_api(slot=slot, command='depth', symbol=symbol.upper(), limit=limit)
 
-    def trades(self, symbol: str, limit: int = 500):
+    def trades(self, symbol: str, limit: int = 500, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Последние (чужие) сделки - /api/v1/trades
 
@@ -240,10 +248,11 @@ class BinanceApi:
 
         :return: список словарей.
         """
-        return self.__call_api(command='trades', symbol=symbol.upper(), limit=limit)
+        return self.__call_api(slot=slot, command='trades', symbol=symbol.upper(), limit=limit)
 
     def aggTrades(self, symbol: str, fromID: int = None, limit: int = 500,
-                  startTime: int = None, endTime: int = None):
+                  startTime: int = None, endTime: int = None,
+                  slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Сжатая история сделок - /api/v1/aggTrades
 
@@ -264,6 +273,7 @@ class BinanceApi:
         :return: список словарей
         """
         kwargs = {'command': 'aggTrades',
+                  'slot': slot,
                   'symbol': symbol.upper(),
                   'limit': limit}
         if fromID:
@@ -275,7 +285,8 @@ class BinanceApi:
         return self.__call_api(**kwargs)
 
     def klines(self, symbol: str, interval: str = '15m', limit: int = 500,
-               startTime: int = None, endTime: int = None):
+               startTime: int = None, endTime: int = None,
+               slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Данные по свечам – /api/v1/klines
 
@@ -310,6 +321,7 @@ class BinanceApi:
         :return: список списков.
         """
         kwargs = {'command': 'klines',
+                  'slot': slot,
                   'symbol': symbol.upper(),
                   'interval': interval,
                   'limit': limit}
@@ -319,7 +331,7 @@ class BinanceApi:
             kwargs['endTime'] = endTime
         return self.__call_api(**kwargs)
 
-    def ticker24hr(self, symbol: str = None):
+    def ticker24hr(self, symbol: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Статистика за 24 часа - /api/v1/ticker/24hr
 
@@ -333,12 +345,13 @@ class BinanceApi:
 
         :return: словарь, если указана пара, и список словарей, если пара не указана.
         """
-        kwargs = {'command': 'ticker24hr'}
+        kwargs = {'command': 'ticker24hr',
+                  'slot': slot}
         if symbol:
             kwargs['symbol'] = symbol.upper()
         return self.__call_api(**kwargs)
 
-    def tickerPrice(self, symbol: str = None):
+    def tickerPrice(self, symbol: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Последняя цена по паре (или парам) - /api/v3/ticker/price
 
@@ -351,12 +364,13 @@ class BinanceApi:
 
         :return: словарь, если указана пара, и список словарей, если пара не указана.
         """
-        kwargs = {'command': 'tickerPrice'}
+        kwargs = {'command': 'tickerPrice',
+                  'slot': slot}
         if symbol:
             kwargs['symbol'] = symbol.upper()
         return self.__call_api(**kwargs)
 
-    def tickerBookTicker(self, symbol: str = None):
+    def tickerBookTicker(self, symbol: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Лучшие цены покупки/продажи - /api/v3/ticker/bookTicker
 
@@ -369,7 +383,8 @@ class BinanceApi:
 
         :return: словарь, если указана пара, и список словарей, если пара не указана.
         """
-        kwargs = {'command': 'tickerBookTicker'}
+        kwargs = {'command': 'tickerBookTicker',
+                  'slot': slot}
         if symbol:
             kwargs['symbol'] = symbol.upper()
         return self.__call_api(**kwargs)
@@ -377,7 +392,7 @@ class BinanceApi:
     def createOrder(self, symbol: str, side: str, type: str, quantity,
                     timeInForce: str = None, price=None, newClientOrderId: str = None,
                     stopPrice=None, icebergQty=None, recvWindow: int = None,
-                    newOrderRespType: str = None):
+                    newOrderRespType: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Создание ордера - /api/v3/order
 
@@ -437,6 +452,7 @@ class BinanceApi:
         :return: при создании ордера вернется словарь, содержимое которого зависит от newOrderRespType
         """
         kwargs = {'command': 'createOrder',
+                  'slot': slot,
                   'symbol': symbol.upper(),
                   'side': side.upper(),
                   'type': type.upper(),
@@ -460,7 +476,7 @@ class BinanceApi:
     def testOrder(self, symbol: str, side: str, type: str, quantity,
                   timeInForce: str = None, price=None, newClientOrderId: str = None,
                   stopPrice=None, icebergQty=None, recvWindow: int = None,
-                  newOrderRespType: str = None):
+                  newOrderRespType: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Тестирование создания ордера: /api/v3/order/test
         Метод позволяет протестировать создание ордера – например, проверить, правильно ли настроены временные рамки. По факту такой ордер никогда не будет исполнен, и средства на его создание затрачены не будут.
@@ -498,6 +514,7 @@ class BinanceApi:
         :return: пустой словарь в случае успеха.
         """
         kwargs = {'command': 'testOrder',
+                  'slot': slot,
                   'symbol': symbol.upper(),
                   'side': side.upper(),
                   'type': type.upper(),
@@ -519,7 +536,8 @@ class BinanceApi:
         return self.__call_api(**kwargs)
 
     def orderInfo(self, symbol: str, orderId: int = None,
-                  origClientOrderId: str = None, recvWindow: int = None):
+                  origClientOrderId: str = None, recvWindow: int = None,
+                  slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Получить информацию по созданному ордеру.
 
@@ -539,6 +557,7 @@ class BinanceApi:
         :return: словарь.
         """
         kwargs = {'command': 'orderInfo',
+                  'slot': slot,
                   'symbol': symbol.upper()}
         if orderId:
             kwargs['orderId'] = orderId
@@ -550,7 +569,7 @@ class BinanceApi:
 
     def cancelOrder(self, symbol: str, orderId: int = None,
                     origClientOrderId: str = None, newClientOrderId: str = None,
-                    recvWindow: int = None):
+                    recvWindow: int = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Отмена ордера - /api/v3/order
 
@@ -571,6 +590,7 @@ class BinanceApi:
         :return: словарь.
         """
         kwargs = {'command': 'cancelOrder',
+                  'slot': slot,
                   'symbol': symbol.upper()}
         if orderId:
             kwargs['orderId'] = orderId
@@ -582,7 +602,8 @@ class BinanceApi:
             kwargs['newClientOrderId'] = newClientOrderId
         return self.__call_api(**kwargs)
 
-    def openOrders(self, symbol: str = None, recvWindow: int = None):
+    def openOrders(self, symbol: str = None, recvWindow: int = None,
+                   slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Текущие открытые пользователем ордера - /api/v3/openOrders
 
@@ -598,7 +619,8 @@ class BinanceApi:
 
         :return: список словарей.
         """
-        kwargs = {'command': 'openOrders'}
+        kwargs = {'command': 'openOrders',
+                  'slot': slot}
         if symbol:
             kwargs['symbol'] = symbol.upper()
         if recvWindow:
@@ -606,7 +628,8 @@ class BinanceApi:
         return self.__call_api(**kwargs)
 
     def allOrders(self, symbol: str, orderId: int = None,
-                  limit: int = None, recvWindow: int = None):
+                  limit: int = None, recvWindow: int = None,
+                  slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Все ордера пользователя вообще - /api/v3/allOrders
         Метод позволяет получить вообще все ордера пользователя – открытые, исполненные или отмененные.
@@ -626,6 +649,7 @@ class BinanceApi:
         :return: список словарей.
         """
         kwargs = {'command': 'allOrders',
+                  'slot': slot,
                   'symbol': symbol.upper()}
         if orderId:
             kwargs['orderId'] = orderId
@@ -635,7 +659,7 @@ class BinanceApi:
             kwargs['recvWindow'] = recvWindow
         return self.__call_api(**kwargs)
 
-    def account(self, recvWindow: int = None):
+    def account(self, recvWindow: int = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Информация по аккаунту - /api/v3/account
 
@@ -650,13 +674,15 @@ class BinanceApi:
 
         :return: словарь.
         """
-        kwargs = {'command': 'account'}
+        kwargs = {'command': 'account',
+                  'slot': slot}
         if recvWindow:
             kwargs['recvWindow'] = recvWindow
         return self.__call_api(**kwargs)
 
     def myTrades(self, symbol: str, limit: int = None,
-                 fromId: int = None, recvWindow: int = None):
+                 fromId: int = None, recvWindow: int = None,
+                 slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
         Список сделок пользователя - /api/v3/myTrades
         Метод позволяет получить историю торгов авторизованного пользователя по указанной паре.
@@ -675,6 +701,7 @@ class BinanceApi:
         :return: список словарей.
         """
         kwargs = {'command': 'myTrades',
+                  'slot': slot,
                   'symbol': symbol.upper()}
         if limit:
             kwargs['limit'] = limit
@@ -684,15 +711,16 @@ class BinanceApi:
             kwargs['recvWindow'] = recvWindow
         return self.__call_api(**kwargs)
 
-    def __call_api(self, **kwargs):
+    def __call_api(self, **kwargs) -> QNetworkReply or dict:
         command = kwargs.pop('command')
+        slot = kwargs.pop('slot')
         api_url = 'https://api.binance.com/' + self.methods[command]['url']
 
         payload = kwargs
         headers = {}
 
         if self.methods[command]['private']:
-            payload.update({'timestamp': int(time.time() * 1000)})
+            payload.update({'timestamp': int(time.time() * 1000) + self.__time_delta})
 
             sign = hmac.new(
                 key=self.api_secret,
@@ -703,13 +731,58 @@ class BinanceApi:
             payload.update({'signature': sign})
             headers = {"X-MBX-APIKEY": self.api_key}
 
-        if self.methods[command]['method'] == 'GET':
+        method = self.methods[command]['method']
+        if method == 'GET':
             api_url += '?' + urllib.parse.urlencode(payload)
 
-        response = requests.request(method=self.methods[command]['method'], url=api_url,
-                                    data="" if self.methods[command]['method'] == 'GET' else payload, headers=headers)
-        # print('BAPI > Method <{}> takes {:.3f} ms'.format(command, response.elapsed.total_seconds() * 1000))
-        return response.json()
+        q_url = QUrl(api_url)
+        q_data = QByteArray()
+        key_list = list(payload.keys())
+        for key in key_list:
+            param = str(key) + '=' + str(payload[key])
+            if key is not key_list[-1]:
+                param += '&'
+            q_data.append(param)
+
+        q_request = QNetworkRequest()
+        q_request.setUrl(q_url)
+        if headers:
+            k, v = headers.popitem()
+            header = QByteArray().append(k)
+            value = QByteArray().append(v)
+            q_request.setRawHeader(header, value)
+
+        reply = None
+        if method == 'POST':
+            reply = self.__q_nam.post(q_request, q_data)
+        elif method == 'DELETE':
+            reply = self.__q_nam.deleteResource(q_request)
+        elif method == 'GET':
+            reply = self.__q_nam.get(q_request)
+        else:
+            logger.error('BAPI > Request: No such method!')
+
+        if reply and slot:
+            reply.finished.connect(slot)
+        elif not reply:
+            logger.error('BAPI> Request FAILED: No Reply')
+        elif not slot:
+            logger.debug('BAPI> Request without slot defined can slow down the application!')
+            loop = QEventLoop()
+            reply.finished.connect(loop.quit)
+            loop.exec()
+            response = bytes(reply.readAll()).decode("utf-8")
+            response_json = {}
+            if response:
+                response_json = json.loads(response)
+            return response_json
+        else:
+            logger.warning('BAPI> Request FAILED: No Slot')
+
+        if reply:
+            return reply
+        else:
+            return None
 
     def get_symbols_info_json(self) -> List[dict]:
         """
@@ -750,9 +823,9 @@ class BinanceApi:
             ]
         }
         """
-        exchange_info = self.exchangeInfo()
+        response_json = self.exchangeInfo()
         try:
-            symbols_info = exchange_info['symbols']
+            symbols_info = response_json['symbols']
         except LookupError:
             return []
         return symbols_info
@@ -761,48 +834,93 @@ class BinanceApi:
         return {each['symbol']: BinanceSymbolInfo(each) for each in self.get_symbols_info_json()}
 
 
-if __name__ == '__main__':
+class _SelfTestReceiver(QObject):
 
-    def print_list(command_name, lst):
-        print('<><><>' + command_name + '<><><>')
-        for each in lst:
-            print('>>>')
-            if isinstance(each, dict):
-                for key, value in each.items():
-                    print('{}:\t{}'.format(key, value))
-            else:
-                for value in each:
-                    print(value)
-        print()
+    def __init__(self):
+        super(_SelfTestReceiver, self).__init__()
+        self.__counter = 0
 
-    def print_dict(command_name, dct):
-        print('<><><>' + command_name + '<><><>')
-        for key, value in dct.items():
-            print('{}:\t{}'.format(key, value))
-        print()
+    def receive_slot(self):
+        self.__counter += 1
+        reply = self.sender()
+        request = reply.request()
+        request_url = str(request.url().path()).ljust(25)
+        response = bytes(reply.readAll()).decode("utf-8")
+        response_json = json.loads(response)
+        print('{}: from {} : {} ### {}'.format(str(self.__counter).zfill(2), reply.operation(),
+                                               request_url, response_json))
+
+    def print(self, method, message):
+        self.__counter += 1
+        method = method.ljust(20)
+        print('{}: from {} ### {}'.format(str(self.__counter).zfill(2), method, message))
+
+    def reset_counter(self):
+        self.__counter = 0
 
 
+def _main():
+    from PyQt5.QtCore import QCoreApplication, QTimer
     from config import API_KEY, API_SECRET
 
-    bot = BinanceApi(API_KEY, API_SECRET)
-    # for _ in range(100):
-    #     bot.ping()
-    #     time.sleep(1)
+    app = QCoreApplication(sys.argv)
 
-    print_dict('ping', bot.ping())
-    print_dict('time', bot.time())
-    print_dict('exchangeInfo', bot.exchangeInfo())
-    print_dict('depth', bot.depth('ethbtc', limit=5))
-    print_list('trades', bot.trades('ethbtc', limit=5))
-    print_list('aggTrades', bot.aggTrades('ethbtc', limit=5))
-    print_list('klines', bot.klines('ethbtc', limit=5))
-    print_dict('ticker24hr', bot.ticker24hr('ethbtc'))
-    print_list('tickerPrice', bot.tickerPrice())
-    print_dict('tickerBookTicker', bot.tickerBookTicker(symbol='ethbtc'))
-    print_dict('testOrder', bot.testOrder('ethbtc', 'BUY', 'MARKET', 0.5))
-    print_dict('orderInfo', bot.orderInfo('ethbtc', 56577459))
-    print_dict('cancelOrder', bot.cancelOrder('ethbtc', 56577459))
-    print_list('openOrders', bot.openOrders())
-    print_list('allOrders', bot.allOrders('ethbtc', limit=5))
-    print_dict('account', bot.account())
-    print_list('myTrades', bot.myTrades('ethbtc', limit=5))
+    bot = BinanceApi(API_KEY, API_SECRET)
+    tr = _SelfTestReceiver()
+    slot = tr.receive_slot
+    # for i in range(10):
+    #     QTimer.singleShot(0, lambda: bot.time(slot))
+
+    sync_func_list = [('ping', lambda: bot.ping()),
+                      ('time', lambda: bot.time()),
+                      ('exchangeInfo', lambda: bot.exchangeInfo()),
+                      ('depth', lambda: bot.depth('ethbtc', limit=5)),
+                      ('trades', lambda: bot.trades('ethbtc', limit=5)),
+                      ('aggTrades', lambda: bot.aggTrades('ethbtc', limit=5)),
+                      ('klines', lambda: bot.klines('ethbtc', limit=5)),
+                      ('ticker24hr', lambda: bot.ticker24hr('ethbtc')),
+                      ('tickerPrice', lambda: bot.tickerPrice()),
+                      ('tickerBookTicker', lambda: bot.tickerBookTicker(symbol='ethbtc')),
+                      ('testOrder', lambda: bot.testOrder('ethbtc', 'BUY', 'MARKET', 0.5)),
+                      ('orderInfo', lambda: bot.orderInfo('ethbtc', 56577459)),
+                      ('cancelOrder', lambda: bot.cancelOrder('ethbtc', 56577459)),
+                      ('openOrders', lambda: bot.openOrders()),
+                      ('allOrders', lambda: bot.allOrders('ethbtc', limit=5)),
+                      ('account', lambda: bot.account()),
+                      ('myTrades', lambda: bot.myTrades('ethbtc', limit=5))]
+
+    async_func_list = [lambda: bot.ping(slot=slot),
+                       lambda: bot.time(slot=slot),
+                       lambda: bot.exchangeInfo(slot=slot),
+                       lambda: bot.depth('ethbtc', limit=5, slot=slot),
+                       lambda: bot.trades('ethbtc', limit=5, slot=slot),
+                       lambda: bot.aggTrades('ethbtc', limit=5, slot=slot),
+                       lambda: bot.klines('ethbtc', limit=5, slot=slot),
+                       lambda: bot.ticker24hr('ethbtc', slot=slot),
+                       lambda: bot.tickerPrice(slot=slot),
+                       lambda: bot.tickerBookTicker(symbol='ethbtc', slot=slot),
+                       lambda: bot.testOrder('ethbtc', 'BUY', 'MARKET', 0.5, slot=slot),
+                       lambda: bot.orderInfo('ethbtc', 56577459, slot=slot),
+                       lambda: bot.cancelOrder('ethbtc', 56577459, slot=slot),
+                       lambda: bot.openOrders(slot=slot),
+                       lambda: bot.allOrders('ethbtc', limit=5, slot=slot),
+                       lambda: bot.account(slot=slot),
+                       lambda: bot.myTrades('ethbtc', limit=5, slot=slot)]
+
+    print('<> Summary {} functions!'.format(len(sync_func_list)))
+    print('> Synchronous calls:')
+    tr.reset_counter()
+    for method, func in sync_func_list:
+        tr.print(method, func())
+    print()
+    print('<> Summary {} functions!'.format(len(async_func_list)))
+    print('> Asynchronous calls:')
+    tr.reset_counter()
+    for func in async_func_list:
+        QTimer.singleShot(0, func)
+
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    _main()
