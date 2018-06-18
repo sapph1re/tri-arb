@@ -5,7 +5,7 @@ import hashlib
 import urllib.parse
 import json
 from typing import List, Dict, Callable
-from PyQt5.QtCore import (QObject, QByteArray, QUrl, QEventLoop)
+from PyQt5.QtCore import (QObject, QByteArray, QUrl, QEventLoop, pyqtSignal)
 from PyQt5.QtNetwork import (QNetworkAccessManager, QNetworkRequest, QNetworkReply)
 from custom_logging import get_logger
 
@@ -168,8 +168,13 @@ class BinanceApi(QObject):
         'myTrades': {'url': 'api/v3/myTrades', 'method': 'GET', 'private': True},
     }
 
-    def __init__(self, api_key, api_secret):
-        super(BinanceApi, self).__init__()
+    start_call_api_async = pyqtSignal(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
+
+    def __init__(self, api_key, api_secret, parent=None):
+        super(BinanceApi, self).__init__(parent)
+
+        self.start_call_api_async.connect(self.__call_api_async)
+
         self.api_key = api_key
         self.api_secret = bytearray(api_secret, encoding='utf-8')
         self.__q_nam = QNetworkAccessManager()
@@ -711,7 +716,7 @@ class BinanceApi(QObject):
             kwargs['recvWindow'] = recvWindow
         return self.__call_api(**kwargs)
 
-    def __call_api(self, **kwargs) -> QNetworkReply or dict:
+    def __call_api(self, **kwargs) -> dict or None:
         command = kwargs.pop('command')
         slot = kwargs.pop('slot')
         api_url = 'https://api.binance.com/' + self.methods[command]['url']
@@ -719,7 +724,10 @@ class BinanceApi(QObject):
         payload = kwargs
         headers = {}
 
-        if self.methods[command]['private']:
+        method = self.methods[command]['method']
+        private = self.methods[command]['private']
+
+        if private:
             payload.update({'timestamp': int(time.time() * 1000) + self.__time_delta})
 
             sign = hmac.new(
@@ -729,9 +737,10 @@ class BinanceApi(QObject):
             ).hexdigest()
 
             payload.update({'signature': sign})
-            headers = {"X-MBX-APIKEY": self.api_key}
+            headers = dict()
+            headers['X-MBX-APIKEY'] = self.api_key
+            headers['Content-Type'] = 'application/x-www-form-urlencoded'
 
-        method = self.methods[command]['method']
         if method == 'GET':
             api_url += '?' + urllib.parse.urlencode(payload)
 
@@ -746,12 +755,18 @@ class BinanceApi(QObject):
 
         q_request = QNetworkRequest()
         q_request.setUrl(q_url)
-        if headers:
-            k, v = headers.popitem()
+        for k, v in headers.items():
             header = QByteArray().append(k)
             value = QByteArray().append(v)
             q_request.setRawHeader(header, value)
 
+        if slot:
+            self.start_call_api_async.emit(method, slot, q_request, q_data)
+            return None
+        else:
+            return self.__call_api_sync(method, q_request, q_data)
+
+    def __call_api_sync(self, method: str, q_request: QNetworkRequest, q_data: QByteArray) -> dict:
         reply = None
         if method == 'POST':
             reply = self.__q_nam.post(q_request, q_data)
@@ -762,12 +777,8 @@ class BinanceApi(QObject):
         else:
             logger.error('BAPI > Request: No such method!')
 
-        if reply and slot:
-            reply.finished.connect(slot)
-        elif not reply:
-            logger.error('BAPI> Request FAILED: No Reply')
-        elif not slot:
-            logger.debug('BAPI> Request without slot defined can slow down the application!')
+        if reply:
+            # logger.debug('BAPI> Request without slot defined can slow down the application!')
             loop = QEventLoop()
             reply.finished.connect(loop.quit)
             loop.exec()
@@ -777,12 +788,24 @@ class BinanceApi(QObject):
                 response_json = json.loads(response)
             return response_json
         else:
-            logger.warning('BAPI> Request FAILED: No Slot')
+            logger.error('BAPI> Request FAILED: No Reply')
+            return {'error': 'No Reply'}
+
+    def __call_api_async(self, method, slot, q_request, q_data):
+        reply = None
+        if method == 'POST':
+            reply = self.__q_nam.post(q_request, q_data)
+        elif method == 'DELETE':
+            reply = self.__q_nam.deleteResource(q_request)
+        elif method == 'GET':
+            reply = self.__q_nam.get(q_request)
+        else:
+            logger.error('BAPI > Request: No such method!')
 
         if reply:
-            return reply
+            reply.finished.connect(slot)
         else:
-            return None
+            logger.error('BAPI> Request FAILED: No Reply')
 
     def get_symbols_info_json(self) -> List[dict]:
         """
