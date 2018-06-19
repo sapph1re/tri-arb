@@ -166,6 +166,7 @@ class BinanceOrderBook(QObject):
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
+            self.__valid = True
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
             logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}'

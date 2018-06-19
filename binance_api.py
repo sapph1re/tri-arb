@@ -888,47 +888,47 @@ def _main():
 
     app = QCoreApplication(sys.argv)
 
-    bot = BinanceApi(API_KEY, API_SECRET)
+    bapi = BinanceApi(API_KEY, API_SECRET)
     tr = _SelfTestReceiver()
     slot = tr.receive_slot
     # for i in range(10):
-    #     QTimer.singleShot(0, lambda: bot.time(slot))
+    #     QTimer.singleShot(0, lambda: bapi.time(slot))
 
-    sync_func_list = [('ping', lambda: bot.ping()),
-                      ('time', lambda: bot.time()),
-                      ('exchangeInfo', lambda: bot.exchangeInfo()),
-                      ('depth', lambda: bot.depth('ethbtc', limit=5)),
-                      ('trades', lambda: bot.trades('ethbtc', limit=5)),
-                      ('aggTrades', lambda: bot.aggTrades('ethbtc', limit=5)),
-                      ('klines', lambda: bot.klines('ethbtc', limit=5)),
-                      ('ticker24hr', lambda: bot.ticker24hr('ethbtc')),
-                      ('tickerPrice', lambda: bot.tickerPrice()),
-                      ('tickerBookTicker', lambda: bot.tickerBookTicker(symbol='ethbtc')),
-                      ('testOrder', lambda: bot.testOrder('ethbtc', 'BUY', 'MARKET', 0.5)),
-                      ('orderInfo', lambda: bot.orderInfo('ethbtc', 56577459)),
-                      ('cancelOrder', lambda: bot.cancelOrder('ethbtc', 56577459)),
-                      ('openOrders', lambda: bot.openOrders()),
-                      ('allOrders', lambda: bot.allOrders('ethbtc', limit=5)),
-                      ('account', lambda: bot.account()),
-                      ('myTrades', lambda: bot.myTrades('ethbtc', limit=5))]
+    sync_func_list = [('ping', lambda: bapi.ping()),
+                      ('time', lambda: bapi.time()),
+                      ('exchangeInfo', lambda: bapi.exchangeInfo()),
+                      ('depth', lambda: bapi.depth('ethbtc', limit=5)),
+                      ('trades', lambda: bapi.trades('ethbtc', limit=5)),
+                      ('aggTrades', lambda: bapi.aggTrades('ethbtc', limit=5)),
+                      ('klines', lambda: bapi.klines('ethbtc', limit=5)),
+                      ('ticker24hr', lambda: bapi.ticker24hr('ethbtc')),
+                      ('tickerPrice', lambda: bapi.tickerPrice()),
+                      ('tickerBookTicker', lambda: bapi.tickerBookTicker(symbol='ethbtc')),
+                      ('testOrder', lambda: bapi.testOrder('ethbtc', 'BUY', 'MARKET', 0.5)),
+                      ('orderInfo', lambda: bapi.orderInfo('ethbtc', 56577459)),
+                      ('cancelOrder', lambda: bapi.cancelOrder('ethbtc', 56577459)),
+                      ('openOrders', lambda: bapi.openOrders()),
+                      ('allOrders', lambda: bapi.allOrders('ethbtc', limit=5)),
+                      ('account', lambda: bapi.account()),
+                      ('myTrades', lambda: bapi.myTrades('ethbtc', limit=5))]
 
-    async_func_list = [lambda: bot.ping(slot=slot),
-                       lambda: bot.time(slot=slot),
-                       lambda: bot.exchangeInfo(slot=slot),
-                       lambda: bot.depth('ethbtc', limit=5, slot=slot),
-                       lambda: bot.trades('ethbtc', limit=5, slot=slot),
-                       lambda: bot.aggTrades('ethbtc', limit=5, slot=slot),
-                       lambda: bot.klines('ethbtc', limit=5, slot=slot),
-                       lambda: bot.ticker24hr('ethbtc', slot=slot),
-                       lambda: bot.tickerPrice(slot=slot),
-                       lambda: bot.tickerBookTicker(symbol='ethbtc', slot=slot),
-                       lambda: bot.testOrder('ethbtc', 'BUY', 'MARKET', 0.5, slot=slot),
-                       lambda: bot.orderInfo('ethbtc', 56577459, slot=slot),
-                       lambda: bot.cancelOrder('ethbtc', 56577459, slot=slot),
-                       lambda: bot.openOrders(slot=slot),
-                       lambda: bot.allOrders('ethbtc', limit=5, slot=slot),
-                       lambda: bot.account(slot=slot),
-                       lambda: bot.myTrades('ethbtc', limit=5, slot=slot)]
+    async_func_list = [lambda: bapi.ping(slot=slot),
+                       lambda: bapi.time(slot=slot),
+                       lambda: bapi.exchangeInfo(slot=slot),
+                       lambda: bapi.depth('ethbtc', limit=5, slot=slot),
+                       lambda: bapi.trades('ethbtc', limit=5, slot=slot),
+                       lambda: bapi.aggTrades('ethbtc', limit=5, slot=slot),
+                       lambda: bapi.klines('ethbtc', limit=5, slot=slot),
+                       lambda: bapi.ticker24hr('ethbtc', slot=slot),
+                       lambda: bapi.tickerPrice(slot=slot),
+                       lambda: bapi.tickerBookTicker(symbol='ethbtc', slot=slot),
+                       lambda: bapi.testOrder('ethbtc', 'BUY', 'MARKET', 0.5, slot=slot),
+                       lambda: bapi.orderInfo('ethbtc', 56577459, slot=slot),
+                       lambda: bapi.cancelOrder('ethbtc', 56577459, slot=slot),
+                       lambda: bapi.openOrders(slot=slot),
+                       lambda: bapi.allOrders('ethbtc', limit=5, slot=slot),
+                       lambda: bapi.account(slot=slot),
+                       lambda: bapi.myTrades('ethbtc', limit=5, slot=slot)]
 
     print('<> Summary {} functions!'.format(len(sync_func_list)))
     print('> Synchronous calls:')
