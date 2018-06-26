@@ -131,7 +131,11 @@ class BinanceDepthWebsocket(QObject):
 
     def __on_message(self, message):
         # logger.debug('WS > Message RECEIVED ### {}', message)
-        json_data = json.loads(message)
+        try:
+            json_data = json.loads(message)
+        except json.JSONDecodeError:
+            logger.error('WS > Bad message received, not a valid JSON: {}', message)
+            return
 
         try:
             data = json_data['data']

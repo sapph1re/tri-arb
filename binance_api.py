@@ -785,7 +785,11 @@ class BinanceApi(QObject):
             response = bytes(reply.readAll()).decode("utf-8")
             response_json = {}
             if response:
-                response_json = json.loads(response)
+                try:
+                    response_json = json.loads(response)
+                except json.JSONDecodeError:
+                    logger.error('BAPI> Request FAILED, server response is not JSON: {}', response)
+                    return {'error': 'Bad response'}
             return response_json
         else:
             logger.error('BAPI> Request FAILED: No Reply')
@@ -869,7 +873,11 @@ class _SelfTestReceiver(QObject):
         request = reply.request()
         request_url = str(request.url().path()).ljust(25)
         response = bytes(reply.readAll()).decode("utf-8")
-        response_json = json.loads(response)
+        try:
+            response_json = json.loads(response)
+        except json.JSONDecodeError:
+            print('Bad response from server')
+            return
         print('{}: from {} : {} ### {}'.format(str(self.__counter).zfill(2), reply.operation(),
                                                request_url, response_json))
 
