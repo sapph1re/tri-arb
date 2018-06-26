@@ -96,13 +96,11 @@ class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in 
             if i >= 50:
                 th = QThread()
                 self.threads.append(th)
-                ws = BinanceDepthWebsocket(parent=th)
-                ws.moveToThread(th)
+                ws = BinanceDepthWebsocket(thread=th)
                 self.websockets.append(ws)
                 i = 0
             # starting an orderbook watcher for every symbol
-            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
-            ob.moveToThread(th)
+            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws, thread=th)
             ob.ob_updated.connect(self.on_orderbook_updated)
             self.orderbooks[symbol] = ob
             i += 1
