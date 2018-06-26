@@ -51,7 +51,7 @@ class Arbitrage:
         return self.__str__()
 
 
-class ArbitrageDetector(QThread):  # TODO: why QThread? changed from QObject in commit 1695699d77c2cd330a1008a395db1263054fa24a
+class ArbitrageDetector(QObject):
     arbitrage_detected = pyqtSignal(Arbitrage)
     arbitrage_disappeared = pyqtSignal(str, str)  # e.g. 'ethbtc eosbtc eoseth', 'sell buy sell'
 
