@@ -389,7 +389,10 @@ class ArbitrageDetector(QObject):
         prices = None
         while 1:
             # check profitability
-            profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
+            try:
+                profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
+            except IndexError:  # if the known orderbook is finished, we'll just stay on that level
+                break
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
@@ -458,7 +461,10 @@ class ArbitrageDetector(QObject):
         prices = None
         while 1:
             # check profitability
-            profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
+            try:
+                profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
+            except IndexError:  # if the known orderbook is finished, we'll just stay on that level
+                break
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
