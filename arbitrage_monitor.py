@@ -4,8 +4,9 @@ import time
 import sys
 from decimal import Decimal
 from config import TRADE_FEE, MIN_PROFIT, DB_USER, DB_PASS, DB_NAME, API_KEY, API_SECRET
-from PyQt5.QtCore import QCoreApplication
+from PyQt5.QtCore import QCoreApplication, QObject
 from binance_api import BinanceApi
+from binance_multiple_api_calls import BinanceMultipleApiCalls, BinanceApiCall
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from custom_logging import get_logger
 logger = get_logger(__name__)
@@ -50,8 +51,12 @@ class DBArbitrageOpportunityActual(DBArbitrageOpportunity):
 
 
 class ArbitrageMonitor:
+    class SlotReceiver(QObject):
+        def receiver(self):
+            pass
+
     def __init__(self):
-        self.arbitrage_opportunities = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
+        self.opportunities = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
         self.api = BinanceApi(API_KEY, API_SECRET)
         symbols_info = self.api.get_symbols_info()
         self.detector = ArbitrageDetector(
@@ -76,50 +81,10 @@ class ArbitrageMonitor:
             amount_left -= trade_amount
             if amount_left <= 0:
                 break
-        if level_price != price:
+        # if level_price != price:
             # logger.error('Order price {} is not equal to the deepest trade price {}', price, level_price)
             # return None
-            pass
         return counter_amount
-
-    def _check_actual_arbitrage(self, arbitrage: Arbitrage):
-        orderbooks = []
-        profits = {}
-        z_spend = Decimal(0)
-        for action in arbitrage.actions:
-            symbol = action.pair[0] + action.pair[1]
-            depth = self.api.depth(symbol=symbol, limit=100)
-            if action.action == 'sell':
-                side = 'bids'
-            elif action.action == 'buy':
-                side = 'asks'
-            ob = [(Decimal(price), Decimal(value)) for price, value, dummy in depth[side]]
-            orderbooks.append(ob)
-            counter_amount = self.calculate_counter_amount(action.amount, action.price, ob)
-            for j in [0, 1]:
-                if action.pair[j] not in profits:
-                    profits[action.pair[j]] = Decimal(0)
-            if action.action == 'sell':
-                profits[action.pair[0]] -= action.amount
-                profits[action.pair[1]] += counter_amount * (1 - TRADE_FEE)
-            elif action.action == 'buy':
-                profits[action.pair[0]] += action.amount * (1 - TRADE_FEE)
-                profits[action.pair[1]] -= counter_amount
-                if action.pair[1] == arbitrage.currency_z:
-                    z_spend += counter_amount
-        profit_rel = profits[arbitrage.currency_z] / z_spend
-        return Arbitrage(
-            actions=arbitrage.actions,
-            currency_z=arbitrage.currency_z,
-            amount_z=z_spend,
-            profit_z=profits[arbitrage.currency_z],
-            profit_z_rel=profit_rel,
-            profit_y=profits[arbitrage.currency_y],
-            currency_y=arbitrage.currency_y,
-            profit_x=profits[arbitrage.currency_x],
-            currency_x=arbitrage.currency_x,
-            orderbooks=tuple(orderbooks)
-        )
 
     @staticmethod
     def _create_opportunity(arb: Arbitrage, original_id: int=0) -> DBArbitrageOpportunity:
@@ -191,26 +156,79 @@ class ArbitrageMonitor:
         opp.lifetime = new_lifetime
         opp.save()
 
+    def _check_actual_arbitrage(self, arb: Arbitrage, original_opportunity_id: int):
+        pairs = '{} {} {}'.format(arb.actions[0].pair, arb.actions[1].pair, arb.actions[2].pair)
+        actions = '{} {} {}'.format(arb.actions[0].action, arb.actions[1].action, arb.actions[2].action)
+
+        depth_api_calls = []
+        actions_by_call_id = {}
+        for action in arb.actions:
+            call = BinanceApiCall(self.api.depth, {'symbol': action.pair[0]+action.pair[1], 'limit': 100})
+            call_id = call.get_id()
+            actions_by_call_id[call_id] = action
+            depth_api_calls.append(call)
+        depth_multicall = BinanceMultipleApiCalls(self.api, depth_api_calls)
+
+        def depth_multicall_receiver(results):
+            orderbooks = []
+            profits = {}
+            z_spend = Decimal(0)
+            for call_id, depth in results.items():
+                action = actions_by_call_id[call_id]
+                side = {'sell': 'bids', 'buy': 'asks'}[action.action]
+                ob = [(Decimal(price), Decimal(value)) for price, value, dummy in depth[side]]
+                orderbooks.append(ob)
+                counter_amount = self.calculate_counter_amount(action.amount, action.price, ob)
+                for j in [0, 1]:
+                    if action.pair[j] not in profits:
+                        profits[action.pair[j]] = Decimal(0)
+                if action.action == 'sell':
+                    profits[action.pair[0]] -= action.amount
+                    profits[action.pair[1]] += counter_amount * (1 - TRADE_FEE)
+                elif action.action == 'buy':
+                    profits[action.pair[0]] += action.amount * (1 - TRADE_FEE)
+                    profits[action.pair[1]] -= counter_amount
+                    if action.pair[1] == arb.currency_z:
+                        z_spend += counter_amount
+            profit_rel = profits[arb.currency_z] / z_spend
+            arb_actual = Arbitrage(
+                actions=arb.actions,
+                currency_z=arb.currency_z,
+                amount_z=z_spend,
+                profit_z=profits[arb.currency_z],
+                profit_z_rel=profit_rel,
+                profit_y=profits[arb.currency_y],
+                currency_y=arb.currency_y,
+                profit_x=profits[arb.currency_x],
+                currency_x=arb.currency_x,
+                orderbooks=tuple(orderbooks)
+            )
+            if 'actual' in self.opportunities[pairs][actions] and self.opportunities[pairs][actions]['actual']:
+                self._update_opportunity(self.opportunities[pairs][actions]['actual'], arb_actual)
+            else:
+                self.opportunities[pairs][actions]['actual'] = self._create_opportunity(arb_actual, original_opportunity_id)
+
+        depth_multicall.finished.connect(depth_multicall_receiver)
+        depth_multicall.start_calls()
+
     def _on_arbitrage_detected(self, arb: Arbitrage):
         pairs = '{} {} {}'.format(arb.actions[0].pair, arb.actions[1].pair, arb.actions[2].pair)
         actions = '{} {} {}'.format(arb.actions[0].action, arb.actions[1].action, arb.actions[2].action)
-        arb_actual = self._check_actual_arbitrage(arb)
-        if pairs not in self.arbitrage_opportunities:
-            self.arbitrage_opportunities[pairs] = {}
-        if actions not in self.arbitrage_opportunities[pairs]:
-            self.arbitrage_opportunities[pairs][actions] = {}
-        if not self.arbitrage_opportunities[pairs][actions]:
-            self.arbitrage_opportunities[pairs][actions]['detected'] = self._create_opportunity(arb)
-            original_id = self.arbitrage_opportunities[pairs][actions]['detected'].id
-            self.arbitrage_opportunities[pairs][actions]['actual'] = self._create_opportunity(arb_actual, original_id)
+        if pairs not in self.opportunities:
+            self.opportunities[pairs] = {}
+        if actions not in self.opportunities[pairs]:
+            self.opportunities[pairs][actions] = {}
+        if not self.opportunities[pairs][actions]:
+            self.opportunities[pairs][actions]['detected'] = self._create_opportunity(arb)
         else:
-            self._update_opportunity(self.arbitrage_opportunities[pairs][actions]['detected'], arb)
-            self._update_opportunity(self.arbitrage_opportunities[pairs][actions]['actual'], arb_actual)
+            self._update_opportunity(self.opportunities[pairs][actions]['detected'], arb)
+        original_id = self.opportunities[pairs][actions]['detected'].id
+        self._check_actual_arbitrage(arb, original_id)
 
     def _on_arbitrage_disappeared(self, pairs: str, actions: str):
-        if pairs not in self.arbitrage_opportunities:
-            self.arbitrage_opportunities[pairs] = {}
-        self.arbitrage_opportunities[pairs][actions] = {}
+        if pairs not in self.opportunities:
+            self.opportunities[pairs] = {}
+        self.opportunities[pairs][actions] = {}
 
 
 if __name__ == '__main__':
