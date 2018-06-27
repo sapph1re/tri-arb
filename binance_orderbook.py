@@ -135,7 +135,12 @@ class BinanceOrderBook(QObject):
         if not response:
             return
 
-        snapshot = json.loads(response)
+        try:
+            snapshot = json.loads(response)
+        except json.JSONDecodeError:
+            logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, response)
+            return
+
         if self.__parse_snapshot(snapshot):
             logger.info('OB {} > Initialized OB'.format(self.__symbol))
             self.__valid = True

@@ -51,10 +51,12 @@ class BinanceApiCall(QObject):
 
         if isinstance(reply, QNetworkReply):
             response = bytes(reply.readAll()).decode("utf-8")
-            if response:
+            try:
                 self.__result = json.loads(response)
+            except json.JSONDecodeError:
+                logger.error('BMAC > JSON Decode FAILED: {}', response)
         else:
-            logger.debug('BAC > update_result_slot(): Sender is not QNetworkReply object!'.format(self.__symbol))
+            logger.debug('BMAC > Sender is not QNetworkReply object!')
 
         self.update_received.emit(self.__id)
 

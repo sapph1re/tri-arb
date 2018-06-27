@@ -131,12 +131,15 @@ class BinanceDepthWebsocket(QObject):
 
     def __on_message(self, message):
         # logger.debug('WS > Message RECEIVED ### {}', message)
-        json_data = json.loads(message)
-
         try:
+            json_data = json.loads(message)
             data = json_data['data']
+        except json.JSONDecodeError:
+            logger.error('WS > JSON Decode FAILED: {}', message)
+            data = {'error': 'Response is not JSON: {}'.format(message)}
         except KeyError:
-            data = {}
+            logger.error('WS > JSON Structure WRONG, no "data" field: {}', json_data)
+            data = {'error': 'Response structure WRONG, no "data" field: {}'.format(json_data)}
         self.symbol_updated.emit(data)
 
     @staticmethod
