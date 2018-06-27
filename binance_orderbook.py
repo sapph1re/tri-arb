@@ -127,7 +127,7 @@ class BinanceOrderBook(QObject):
     def init_ob_slot(self):
         reply = self.sender()
         if not isinstance(reply, QNetworkReply):
-            logger.debug('OB {} > init_ob_slot(): Sender is not QNetworkReply object!'.format(self.__symbol))
+            logger.debug('OB {} > init_ob_slot(): Sender is not QNetworkReply object!', self.__symbol)
             return
 
         response = bytes(reply.readAll()).decode("utf-8")
@@ -138,17 +138,17 @@ class BinanceOrderBook(QObject):
         try:
             snapshot = json.loads(response)
         except json.JSONDecodeError:
-            logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, response)
+            logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, str(response))
             return
 
         if self.__parse_snapshot(snapshot):
-            logger.info('OB {} > Initialized OB'.format(self.__symbol))
+            logger.info('OB {} > Initialized OB', self.__symbol)
             self.__valid = True
             self.ob_updated.emit(self.__symbol)
             self.__start_time = time.time()
             self.__initializing = False
         else:
-            logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
+            logger.info('OB {} > OB initialization FAILED! Retrying...', self.__symbol)
             self.__initializing = False
             self.init_order_book()
 
@@ -161,25 +161,23 @@ class BinanceOrderBook(QObject):
 
         # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
         if time.time() - self.__start_time > self.__timeout:
-            logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}'
-                         .format(self.__symbol, self.__lastUpdateId))
+            logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}', self.__symbol, self.__lastUpdateId)
             self.init_order_book()
 
         if from_id <= self.__lastUpdateId + 1 <= to_id:
-            logger.debug('OB {} > Update: OK ### {} ### {} > {}'
-                         .format(self.__symbol, self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
             self.__valid = True
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
-            logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}'
-                         .format(self.__symbol, self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
+                         self.__symbol, self.__lastUpdateId, from_id, to_id)
             self.init_order_book()
         else:
-            logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}'
-                         .format(self.__symbol, self.__lastUpdateId, from_id, to_id))
+            logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
+                         self.__symbol, self.__lastUpdateId, from_id, to_id)
 
     def __parse_snapshot(self, snapshot):
         try:
@@ -187,7 +185,7 @@ class BinanceOrderBook(QObject):
             self.__update_bids(snapshot['bids'])
             self.__update_asks(snapshot['asks'])
         except LookupError:
-            logger.debug('OB {} > Parse Snapshot ERROR'.format(self.__symbol))
+            logger.debug('OB {} > Parse Snapshot ERROR', self.__symbol)
             return False
         return True
 

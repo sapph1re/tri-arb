@@ -94,7 +94,7 @@ class BinanceDepthWebsocket(QObject):
             # logger.debug('WS > Connecting...')
             self.__ws_client.open(wss_qurl)
         except Exception as e:
-            logger.exception('WS > Connect exception: {}'.format(e))
+            logger.exception('WS > Connect exception: {}', str(e))
             self.connect()
 
     def start_ping(self):
@@ -120,7 +120,7 @@ class BinanceDepthWebsocket(QObject):
             5 - QAbstractSocket::ListeningState     - For internal use only.
         :return:
         """
-        logger.debug('WS > State changed to "{}"'.format(self.__ws_states[state]))
+        logger.debug('WS > State changed to "{}"', self.__ws_states[state])
         if state == QAbstractSocket.UnconnectedState:  # Unconnected state == 0
             self.stop_ping()
             self.connect()
@@ -144,18 +144,17 @@ class BinanceDepthWebsocket(QObject):
 
     @staticmethod
     def __on_pong(elapsed_time, payload):
-        logger.debug("WS > PONG: {} ms ### {}".format(elapsed_time, payload))
-        pass
+        logger.debug("WS > PONG: {} ms ### {}", elapsed_time, str(payload))
 
     def __on_error(self, error):
-        logger.error("WS > Error: {}".format(self.__ws_errors[error]))
+        logger.error("WS > Error: {}", self.__ws_errors[error])
 
     def __on_sslerrors(self, errors):
         try:
             for error in errors:
-                logger.error("WS > SSL Error: {}".format(self.__ws_sslerrors[error]))
+                logger.error("WS > SSL Error: {}", self.__ws_sslerrors[error])
         except Exception as e:
-            logger.exception("WS > __on_sslerrors EXCEPTION: {}".format(str(e)))
+            logger.exception("WS > __on_sslerrors EXCEPTION: {}", str(e))
 
     def __on_close(self):
         # logger.info("WS > Closed")

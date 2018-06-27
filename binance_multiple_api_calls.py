@@ -54,7 +54,7 @@ class BinanceApiCall(QObject):
             try:
                 self.__result = json.loads(response)
             except json.JSONDecodeError:
-                logger.error('BMAC > JSON Decode FAILED: {}', response)
+                logger.error('BMAC > JSON Decode FAILED: {}', str(response))
         else:
             logger.debug('BMAC > Sender is not QNetworkReply object!')
 
@@ -202,6 +202,7 @@ def _main():
 
     QTimer.singleShot(0, multi_call01.start_calls)
     QTimer.singleShot(0, multi_call02.start_calls)
+
     QTimer.singleShot(5000, app.exit)
 
     sys.exit(app.exec_())
