@@ -138,7 +138,7 @@ class BinanceOrderBook(QObject):
         try:
             snapshot = json.loads(response)
         except json.JSONDecodeError:
-            logger.error('OB {} > Bad response, not a valid JSON: {}', response)
+            logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, response)
             return
 
         if self.__parse_snapshot(snapshot):
