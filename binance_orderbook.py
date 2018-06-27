@@ -3,7 +3,9 @@ import time
 from sortedcontainers import SortedSet
 from operator import neg
 from decimal import Decimal
+
 from PyQt5.QtCore import (QObject, pyqtSignal)
+from PyQt5.QtNetwork import QNetworkReply
 
 from binance_api import BinanceApi
 from binance_depth_websocket import BinanceDepthWebsocket
@@ -19,8 +21,14 @@ class BinanceOrderBook(QObject):
 
     def __init__(self, api: BinanceApi, base: str, quote: str,
                  websocket: BinanceDepthWebsocket = None,
-                 reinit_timeout: int = 600, parent=None):
-        super(BinanceOrderBook, self).__init__(parent)
+                 reinit_timeout: int = 600,
+                 thread=None, parent=None):
+        super(BinanceOrderBook, self).__init__(parent=parent)
+
+        if thread:
+            self.moveToThread(thread)
+
+        # logger.debug('OB {} > SELF INIT!'.format(base+quote))
 
         self.__api = api
         self.__base = base.upper()
@@ -30,8 +38,7 @@ class BinanceOrderBook(QObject):
         self.__websocket = websocket
         if self.__websocket:
             self.__websocket.add_symbol(self.__symbol)
-            self.__websocket.symbol_updated.connect(self.update_orderbook)
-            self.__websocket.disconnected.connect(self.__on_ws_disconnected)
+            self.__websocket_connect_slots()
 
         self.__lastUpdateId = 0
         self.__bids = {}
@@ -48,6 +55,14 @@ class BinanceOrderBook(QObject):
 
         self.__start_time = time.time()
         self.__timeout = reinit_timeout  # in seconds
+
+    def __websocket_connect_slots(self):
+        self.__websocket.symbol_updated.connect(self.update_orderbook)
+        self.__websocket.disconnected.connect(self.__on_ws_disconnected)
+
+    def __websocket_disconnect_slots(self):
+        self.__websocket.symbol_updated.disconnect(self.update_orderbook)
+        self.__websocket.disconnected.disconnect(self.__on_ws_disconnected)
 
     def is_valid(self) -> bool:
         return self.__valid
@@ -81,14 +96,14 @@ class BinanceOrderBook(QObject):
 
         self.__websocket = ws
         self.__websocket.add_symbol(self.__symbol)
-        self.__websocket.symbol_updated.connect(self.update_orderbook)
+        self.__websocket_connect_slots()
 
     def remove_websocket(self):
         if not self.__websocket:
             return
 
         self.__websocket.remove_symbol(self.__symbol)
-        self.__websocket.symbol_updated.disconnect(self.update_orderbook)
+        self.__websocket_disconnect_slots()
 
     def get_websocket(self):
         return self.__websocket
@@ -110,27 +125,32 @@ class BinanceOrderBook(QObject):
         self.__api.depth(slot=self.init_ob_slot, symbol=self.__symbol, limit=100)
 
     def init_ob_slot(self):
-        # TODO: think about this try-except later
+        reply = self.sender()
+        if not isinstance(reply, QNetworkReply):
+            logger.debug('OB {} > init_ob_slot(): Sender is not QNetworkReply object!'.format(self.__symbol))
+            return
+
+        response = bytes(reply.readAll()).decode("utf-8")
+
+        if not response:
+            return
+
         try:
-            reply = self.sender()
-            response = bytes(reply.readAll()).decode("utf-8")
-
-            if not response:
-                return
-
             snapshot = json.loads(response)
-            if self.__parse_snapshot(snapshot):
-                logger.info('OB {} > Initialized OB'.format(self.__symbol))
-                self.__valid = True
-                self.ob_updated.emit(self.__symbol)
-                self.__start_time = time.time()
-                self.__initializing = False
-            else:
-                logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
-                self.__initializing = False
-                self.init_order_book()
-        except Exception as e:
-            logger.exception('OB {} > INIT EXCEPTION: {}'.format(self.__symbol, str(e)))
+        except json.JSONDecodeError:
+            logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, response)
+            return
+
+        if self.__parse_snapshot(snapshot):
+            logger.info('OB {} > Initialized OB'.format(self.__symbol))
+            self.__valid = True
+            self.ob_updated.emit(self.__symbol)
+            self.__start_time = time.time()
+            self.__initializing = False
+        else:
+            logger.info('OB {} > OB initialization FAILED! Retrying...'.format(self.__symbol))
+            self.__initializing = False
+            self.init_order_book()
 
     def update_orderbook(self, update: dict):
         if self.__initializing or (not update) or (update['s'] != self.__symbol):
@@ -151,6 +171,7 @@ class BinanceOrderBook(QObject):
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
+            self.__valid = True
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
             logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}'
@@ -237,32 +258,32 @@ def _main():
     from config import API_KEY, API_SECRET
 
     app = QCoreApplication(sys.argv)
-    api = BinanceApi(API_KEY, API_SECRET)
 
+    api = BinanceApi(API_KEY, API_SECRET)
     symbols_dict = api.get_symbols_info()
     symbols_list = [(v.get_base_asset(), v.get_quote_asset()) for k, v in symbols_dict.items()]
+
     threads = []
     websockets = []
     order_books = []
     i = 999
 
+    ws = None
+    th = None
     for each in symbols_list:
         if i >= 50:
             th = QThread()
             threads.append(th)
 
-            ws = BinanceDepthWebsocket(parent=th)
-            ws.moveToThread(th)
+            ws = BinanceDepthWebsocket(thread=th)
             websockets.append(ws)
-
             i = 0
 
-        ob = BinanceOrderBook(api, each[0], each[1], ws, parent=th)
-        ob.moveToThread(th)
+        ob = BinanceOrderBook(api, each[0], each[1], ws, thread=th)
         order_books.append(ob)
-
         i += 1
 
+    print('Number of threads = {}'.format(len(threads)))
     for each in threads:
         each.start()
 

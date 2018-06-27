@@ -2,8 +2,8 @@ import sys
 import json
 
 from PyQt5.QtCore import (QCoreApplication, QUrl, QTimer,
-                          QObject, pyqtSignal)
-from PyQt5.QtNetwork import QAbstractSocket, QSslError
+                          QObject, Qt, pyqtSignal)
+from PyQt5.QtNetwork import QAbstractSocket, QSslError  # don't delete here anything if IDE says something about unused
 from PyQt5.QtWebSockets import QWebSocket
 
 from custom_logging import get_logger
@@ -17,11 +17,26 @@ class BinanceDepthWebsocket(QObject):
     connected = pyqtSignal()
     disconnected = pyqtSignal()
 
-    def __init__(self, parent=None, ping_timeout=5000):
-        super(BinanceDepthWebsocket, self).__init__(parent)
+    def __init__(self, ping_timeout=5000, thread=None, parent=None):
+        super(BinanceDepthWebsocket, self).__init__(parent=parent)
+
+        if thread:
+            self.moveToThread(thread)
+
         self.__symbols = set()
         self.__wss_url = ''
-        self.__ws_client = QWebSocket(parent=self)
+
+        self.__ws_client = QWebSocket()
+        self.__ws_client.textMessageReceived.connect(self.__on_message)
+        self.__ws_client.error.connect(self.__on_error)
+        self.__ws_client.sslErrors.connect(self.__on_sslerrors)
+        self.__ws_client.connected.connect(self.__on_open)
+        self.__ws_client.disconnected.connect(self.__on_close)
+        self.__ws_client.stateChanged.connect(self.__on_state_changed, Qt.DirectConnection)
+        self.__ws_client.pong.connect(self.__on_pong)
+
+        self.__ping_timer = QTimer()
+        self.__ping_timeout = ping_timeout
 
         self.__ws_states = {}
         for key in dir(QAbstractSocket):
@@ -43,17 +58,6 @@ class BinanceDepthWebsocket(QObject):
             if isinstance(value, QSslError.SslError):
                 self.__ws_sslerrors[key] = value
                 self.__ws_sslerrors[value] = key
-
-        self.__ping_timer = QTimer(self)
-        self.__ping_timeout = ping_timeout
-
-        self.__ws_client.textMessageReceived.connect(self.__on_message)
-        self.__ws_client.error.connect(self.__on_error)
-        self.__ws_client.sslErrors.connect(self.__on_sslerrors)
-        self.__ws_client.connected.connect(self.__on_open)
-        self.__ws_client.disconnected.connect(self.__on_close)
-        self.__ws_client.stateChanged.connect(self.__on_state_changed)
-        self.__ws_client.pong.connect(self.__on_pong)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.__ws_client.close()
@@ -94,7 +98,7 @@ class BinanceDepthWebsocket(QObject):
             self.connect()
 
     def start_ping(self):
-        # logger.debug('WS > PING')
+        logger.debug('WS > PING')
         self.__ws_client.ping()
         self.__ping_timer.singleShot(self.__ping_timeout, self.start_ping)
 
@@ -127,16 +131,20 @@ class BinanceDepthWebsocket(QObject):
 
     def __on_message(self, message):
         # logger.debug('WS > Message RECEIVED ### {}', message)
-        json_data = json.loads(message)
-
         try:
+            json_data = json.loads(message)
             data = json_data['data']
+        except json.JSONDecodeError:
+            logger.error('WS > JSON Decode FAILED: {}', message)
+            data = {'error': 'Response is not JSON: {}'.format(message)}
         except KeyError:
-            data = {}
+            logger.error('WS > JSON Structure WRONG, no "data" field: {}', json_data)
+            data = {'error': 'Response structure WRONG, no "data" field: {}'.format(json_data)}
         self.symbol_updated.emit(data)
 
-    def __on_pong(self, elapsed_time, payload):
-        # logger.debug("WS > PONG: {} ms ### {}".format(elapsed_time, payload))
+    @staticmethod
+    def __on_pong(elapsed_time, payload):
+        logger.debug("WS > PONG: {} ms ### {}".format(elapsed_time, payload))
         pass
 
     def __on_error(self, error):
@@ -161,10 +169,15 @@ class BinanceDepthWebsocket(QObject):
 if __name__ == '__main__':
     app = QCoreApplication(sys.argv)
 
-    # ws = BinanceDepthWebsocket(app)
+    # ws = BinanceDepthWebsocket(parent=app)
     # ws.add_symbol('ETHBTC')
     # ws.connect()
 
+    # ws = BinanceDepthWebsocket()
+    # ws.add_symbol('XZCBNB')
+    # ws.connect()
+
+    from PyQt5.QtCore import QThread
     from binance_api import BinanceApi
     from config import API_KEY, API_SECRET
 
@@ -172,34 +185,28 @@ if __name__ == '__main__':
 
     symbols_dict = bapi.get_symbols_info()
     symbols_list = [(v.get_base_asset(), v.get_quote_asset()) for k, v in symbols_dict.items()]
+
     threads = []
     websockets = []
-    order_books = []
     i = 999
 
+    ws = None
     for each in symbols_list:
         if i >= 50:
-            ws = BinanceDepthWebsocket()
+            th = QThread()
+            threads.append(th)
+
+            ws = BinanceDepthWebsocket(thread=th)
             websockets.append(ws)
             i = 0
-        ws.add_symbol(each[0]+each[1])
+
+        ws.add_symbol(each[0] + each[1])
+        i += 1
+
+    for each in threads:
+        each.start()
 
     for each in websockets:
         each.connect()
-
-    # ws = BinanceDepthWebsocket()
-    # ws.add_symbol('XZCBNB')
-    # ws.connect()
-
-    # import threading
-    # import gc
-    #
-    # def collect_garbage():
-    #     threading.Timer(60, collect_garbage).start()
-    #     print('GC > Garbage collection has been started!')
-    #     gc.collect()
-    #
-    # gc.disable()
-    # collect_garbage()
 
     sys.exit(app.exec_())
