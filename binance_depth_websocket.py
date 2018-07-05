@@ -2,7 +2,7 @@ import sys
 import json
 
 from PyQt5.QtCore import (QCoreApplication, QUrl, QTimer,
-                          QObject, Qt, pyqtSignal)
+                          QObject, Qt, pyqtSignal, pyqtSlot)
 from PyQt5.QtNetwork import QAbstractSocket, QSslError  # don't delete here anything if IDE says something about unused
 from PyQt5.QtWebSockets import QWebSocket
 
@@ -94,7 +94,7 @@ class BinanceDepthWebsocket(QObject):
             # logger.debug('WS > Connecting...')
             self.__ws_client.open(wss_qurl)
         except Exception as e:
-            logger.exception('WS > Connect exception: {}'.format(e))
+            logger.exception('WS > Connect exception: {}', str(e))
             self.connect()
 
     def start_ping(self):
@@ -108,6 +108,7 @@ class BinanceDepthWebsocket(QObject):
     def close(self):
         self.__ws_client.close(reason='WS > Manually closed!')
 
+    @pyqtSlot('QAbstractSocket::SocketState')
     def __on_state_changed(self, state):
         """
         :param state:
@@ -120,7 +121,7 @@ class BinanceDepthWebsocket(QObject):
             5 - QAbstractSocket::ListeningState     - For internal use only.
         :return:
         """
-        logger.debug('WS > State changed to "{}"'.format(self.__ws_states[state]))
+        logger.debug('WS > State changed to "{}"', self.__ws_states[state])
         if state == QAbstractSocket.UnconnectedState:  # Unconnected state == 0
             self.stop_ping()
             self.connect()
@@ -129,6 +130,7 @@ class BinanceDepthWebsocket(QObject):
             self.start_ping()
             self.connected.emit()
 
+    @pyqtSlot(str)
     def __on_message(self, message):
         # logger.debug('WS > Message RECEIVED ### {}', message)
         try:
@@ -142,25 +144,28 @@ class BinanceDepthWebsocket(QObject):
             data = {'error': 'Response structure WRONG, no "data" field: {}'.format(json_data)}
         self.symbol_updated.emit(data)
 
-    @staticmethod
-    def __on_pong(elapsed_time, payload):
-        logger.debug("WS > PONG: {} ms ### {}".format(elapsed_time, payload))
-        pass
+    @pyqtSlot('quint64', 'QByteArray')
+    def __on_pong(self, elapsed_time, payload):
+        logger.debug("WS > PONG: {} ms ### {}", elapsed_time, str(payload))
 
+    @pyqtSlot('QAbstractSocket::SocketError')
     def __on_error(self, error):
-        logger.error("WS > Error: {}".format(self.__ws_errors[error]))
+        logger.error("WS > Error: {}", self.__ws_errors[error])
 
+    @pyqtSlot()
     def __on_sslerrors(self, errors):
         try:
             for error in errors:
-                logger.error("WS > SSL Error: {}".format(self.__ws_sslerrors[error]))
+                logger.error("WS > SSL Error: {}", self.__ws_sslerrors[error])
         except Exception as e:
-            logger.exception("WS > __on_sslerrors EXCEPTION: {}".format(str(e)))
+            logger.exception("WS > __on_sslerrors EXCEPTION: {}", str(e))
 
+    @pyqtSlot()
     def __on_close(self):
         # logger.info("WS > Closed")
         pass
 
+    @pyqtSlot()
     def __on_open(self):
         # logger.info("WS > Opened")
         pass

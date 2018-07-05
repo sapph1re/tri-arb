@@ -5,7 +5,8 @@ import hashlib
 import urllib.parse
 import json
 from typing import List, Dict, Callable
-from PyQt5.QtCore import (QObject, QByteArray, QUrl, QEventLoop, pyqtSignal)
+from PyQt5.QtCore import (QByteArray, QUrl, QEventLoop,
+                          QObject, pyqtSignal, pyqtSlot)
 from PyQt5.QtNetwork import (QNetworkAccessManager, QNetworkRequest, QNetworkReply)
 from custom_logging import get_logger
 
@@ -185,7 +186,7 @@ class BinanceApi(QObject):
             server_time = time_response['serverTime']
             self.__time_delta = int(server_time - time.time() * 1000)
         except LookupError as e:
-            logger.info('BAPI > Time synchronization got BAD response: {}'.format(str(e)))
+            logger.info('BAPI > Time synchronization got BAD response: {}', str(e))
 
     def ping(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
         """
@@ -778,7 +779,7 @@ class BinanceApi(QObject):
             logger.error('BAPI > Request: No such method!')
 
         if reply:
-            # logger.debug('BAPI> Request without slot defined can slow down the application!')
+            # logger.debug('BAPI > Request without slot defined can slow down the application!')
             loop = QEventLoop()
             reply.finished.connect(loop.quit)
             loop.exec()
@@ -787,12 +788,13 @@ class BinanceApi(QObject):
                 response_json = json.loads(response)
                 return response_json
             except json.JSONDecodeError:
-                logger.error('BAPI > JSON Decode FAILED: {}', response)
+                logger.error('BAPI > JSON Decode FAILED: {}', str(response))
                 return {'error': 'Response is not JSON: {}'.format(response)}
         else:
             logger.error('BAPI> Request FAILED: No Reply')
             return {'error': 'No Reply'}
 
+    @pyqtSlot(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
     def __call_api_async(self, method, slot, q_request, q_data):
         reply = None
         if method == 'POST':
@@ -807,7 +809,7 @@ class BinanceApi(QObject):
         if reply:
             reply.finished.connect(slot)
         else:
-            logger.error('BAPI> Request FAILED: No Reply')
+            logger.error('BAPI > Request FAILED: No Reply')
 
     def get_symbols_info_json(self) -> List[dict]:
         """
@@ -865,6 +867,7 @@ class _SelfTestReceiver(QObject):
         super(_SelfTestReceiver, self).__init__()
         self.__counter = 0
 
+    @pyqtSlot()
     def receive_slot(self):
         self.__counter += 1
         reply = self.sender()
@@ -947,6 +950,8 @@ def _main():
     tr.reset_counter()
     for func in async_func_list:
         QTimer.singleShot(0, func)
+
+    QTimer.singleShot(5000, app.exit)
 
     sys.exit(app.exec_())
 

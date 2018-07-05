@@ -3,8 +3,7 @@ import json
 import uuid
 from typing import List, Dict, Callable
 
-from PyQt5.QtCore import (QObject, pyqtSignal)
-from PyQt5.QtNetwork import (QNetworkReply)
+from PyQt5.QtCore import (QObject, pyqtSignal, pyqtSlot)
 
 from binance_api import BinanceApi
 from custom_logging import get_logger
@@ -46,19 +45,18 @@ class BinanceApiCall(QObject):
     def set_kwargs(self, kwargs: dict):
         self.__kwargs = kwargs
 
+    @pyqtSlot()
     def update_result_slot(self):
-        reply = self.sender()
-
-        if isinstance(reply, QNetworkReply):
+        try:
+            reply = self.sender()
             response = bytes(reply.readAll()).decode("utf-8")
-            try:
-                self.__result = json.loads(response)
-            except json.JSONDecodeError:
-                logger.error('BMAC > JSON Decode FAILED: {}', response)
-        else:
-            logger.debug('BMAC > Sender is not QNetworkReply object!')
-
-        self.update_received.emit(self.__id)
+            self.__result = json.loads(response)
+        except json.JSONDecodeError:
+            logger.error('BMAC > JSON Decode FAILED: {}', str(response))
+        except Exception as e:
+            logger.error('BMAC > update_result_slot(): Unknown EXCEPTION: {}', str(e))
+        finally:
+            self.update_received.emit(self.__id)
 
     def get_result(self):
         return self.__result
@@ -143,6 +141,7 @@ class BinanceMultipleApiCalls(QObject):
             method(slot=slot, **kwargs)
         return True
 
+    @pyqtSlot(int)
     def __update_call_slot(self, call_id: int):
         self.__calls_flag[call_id] = True
         self.__calls_result[call_id] = self.__calls_dict[call_id].get_result()
@@ -159,10 +158,10 @@ class BinanceMultipleApiCalls(QObject):
         return self.__calls_result
 
 
-class _SelfTestReceiver:
+class _SelfTestReceiver(QObject):
 
-    @staticmethod
-    def update_slot(results: dict):
+    @pyqtSlot(dict)
+    def update_slot(self, results: dict):
         for k, v in results.items():
             print('{}\t: {}'.format(k, v))
 
@@ -202,6 +201,7 @@ def _main():
 
     QTimer.singleShot(0, multi_call01.start_calls)
     QTimer.singleShot(0, multi_call02.start_calls)
+
     QTimer.singleShot(5000, app.exit)
 
     sys.exit(app.exec_())
