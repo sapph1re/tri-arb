@@ -7,6 +7,7 @@ from PyQt5.QtNetwork import QAbstractSocket, QSslError  # don't delete here anyt
 from PyQt5.QtWebSockets import QWebSocket
 
 from custom_logging import get_logger
+from helpers import pyqt_try_except
 
 logger = get_logger(__name__)
 
@@ -109,6 +110,7 @@ class BinanceDepthWebsocket(QObject):
         self.__ws_client.close(reason='WS > Manually closed!')
 
     @pyqtSlot('QAbstractSocket::SocketState')
+    @pyqt_try_except(logger, 'WS', '__on_state_changed')
     def __on_state_changed(self, state):
         """
         :param state:
@@ -133,6 +135,7 @@ class BinanceDepthWebsocket(QObject):
     @pyqtSlot(str)
     def __on_message(self, message):
         # logger.debug('WS > Message RECEIVED ### {}', message)
+        data = message
         try:
             json_data = json.loads(message)
             data = json_data['data']
@@ -142,30 +145,36 @@ class BinanceDepthWebsocket(QObject):
         except KeyError:
             logger.error('WS > JSON Structure WRONG, no "data" field: {}', json_data)
             data = {'error': 'Response structure WRONG, no "data" field: {}'.format(json_data)}
-        self.symbol_updated.emit(data)
+        except BaseException as e:
+            logger.exception('WS > __on_message(): Unknown EXCEPTION: {}', str(e))
+            data = {'error': 'Unknown ECEPTION: {}'.format(str(e))}
+        finally:
+            self.symbol_updated.emit(data)
 
     @pyqtSlot('quint64', 'QByteArray')
+    @pyqt_try_except(logger, 'WS', '__on_pong')
     def __on_pong(self, elapsed_time, payload):
         logger.debug("WS > PONG: {} ms ### {}", elapsed_time, str(payload))
 
     @pyqtSlot('QAbstractSocket::SocketError')
+    @pyqt_try_except(logger, 'WS', '__on_error')
     def __on_error(self, error):
         logger.error("WS > Error: {}", self.__ws_errors[error])
 
     @pyqtSlot()
+    @pyqt_try_except(logger, 'WS', '__on_sslerrors')
     def __on_sslerrors(self, errors):
-        try:
-            for error in errors:
-                logger.error("WS > SSL Error: {}", self.__ws_sslerrors[error])
-        except Exception as e:
-            logger.exception("WS > __on_sslerrors EXCEPTION: {}", str(e))
+        for error in errors:
+            logger.error("WS > SSL Error: {}", self.__ws_sslerrors[error])
 
     @pyqtSlot()
+    @pyqt_try_except(logger, 'WS', '__on_close')
     def __on_close(self):
         # logger.info("WS > Closed")
         pass
 
     @pyqtSlot()
+    @pyqt_try_except(logger, 'WS', '__on_open')
     def __on_open(self):
         # logger.info("WS > Opened")
         pass
