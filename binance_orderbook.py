@@ -9,6 +9,7 @@ from PyQt5.QtCore import (QObject, pyqtSignal, pyqtSlot)
 from binance_api import BinanceApi
 from binance_depth_websocket import BinanceDepthWebsocket
 from custom_logging import get_logger
+from helpers import pyqt_try_except
 
 
 logger = get_logger(__name__)
@@ -147,41 +148,39 @@ class BinanceOrderBook(QObject):
         except BOInitException:
             self.__initializing = False
             self.init_order_book()
-        except Exception as e:
-            logger.error('OB {} > init_ob_slot(): Unknown EXCEPTION: {}', str(e))
+        except BaseException as e:
+            logger.exception('OB {} > init_ob_slot(): Unknown EXCEPTION: {}', str(e))
         finally:
             self.__initializing = False
 
     @pyqtSlot(dict)
+    @pyqt_try_except(logger, 'BO', 'update_orderbook')
     def update_orderbook(self, update: dict):
-        try:
-            if self.__initializing or (not update) or (update['s'] != self.__symbol):
-                return
+        if self.__initializing or (not update) or (update['s'] != self.__symbol):
+            return
 
-            from_id = update['U']
-            to_id = update['u']
+        from_id = update['U']
+        to_id = update['u']
 
-            # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
-            if time.time() - self.__start_time > self.__timeout:
-                logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}', self.__symbol, self.__lastUpdateId)
-                self.init_order_book()
+        # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
+        if time.time() - self.__start_time > self.__timeout:
+            logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}', self.__symbol, self.__lastUpdateId)
+            self.init_order_book()
 
-            if from_id <= self.__lastUpdateId + 1 <= to_id:
-                logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
-                self.__lastUpdateId = to_id
-                self.__update_bids(update['b'])
-                self.__update_asks(update['a'])
-                self.__valid = True
-                self.ob_updated.emit(self.__symbol)
-            elif self.__lastUpdateId < from_id:
-                logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
-                             self.__symbol, self.__lastUpdateId, from_id, to_id)
-                self.init_order_book()
-            else:
-                logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
-                             self.__symbol, self.__lastUpdateId, from_id, to_id)
-        except Exception as e:
-            logger.error('OB {} > update_orderbook(): Unknown EXCEPTION: {}', str(e))
+        if from_id <= self.__lastUpdateId + 1 <= to_id:
+            logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
+            self.__lastUpdateId = to_id
+            self.__update_bids(update['b'])
+            self.__update_asks(update['a'])
+            self.__valid = True
+            self.ob_updated.emit(self.__symbol)
+        elif self.__lastUpdateId < from_id:
+            logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
+                         self.__symbol, self.__lastUpdateId, from_id, to_id)
+            self.init_order_book()
+        else:
+            logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
+                         self.__symbol, self.__lastUpdateId, from_id, to_id)
 
     def __parse_snapshot(self, snapshot):
         try:
@@ -250,6 +249,8 @@ class BinanceOrderBook(QObject):
 class _SelfTestReceiver(QObject):
 
     @staticmethod
+    @pyqtSlot(str)
+    @pyqt_try_except(logger, 'OB _SelfTestReceiver', 'update_reciever')
     def update_reciever(symbol: str):
         print('UR > Update signal is received! ### {}'.format(symbol))
 

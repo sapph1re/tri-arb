@@ -7,6 +7,7 @@ from PyQt5.QtCore import (QObject, pyqtSignal, pyqtSlot)
 
 from binance_api import BinanceApi
 from custom_logging import get_logger
+from helpers import pyqt_try_except
 
 logger = get_logger(__name__)
 
@@ -52,9 +53,9 @@ class BinanceApiCall(QObject):
             response = bytes(reply.readAll()).decode("utf-8")
             self.__result = json.loads(response)
         except json.JSONDecodeError:
-            logger.error('BMAC > JSON Decode FAILED: {}', str(response))
-        except Exception as e:
-            logger.error('BMAC > update_result_slot(): Unknown EXCEPTION: {}', str(e))
+            logger.error('BSAC > JSON Decode FAILED: {}', str(response))
+        except BaseException as e:
+            logger.error('BSAC > update_result_slot(): Unknown EXCEPTION: {}', str(e))
         finally:
             self.update_received.emit(self.__id)
 
@@ -142,6 +143,7 @@ class BinanceMultipleApiCalls(QObject):
         return True
 
     @pyqtSlot(int)
+    @pyqt_try_except(logger, 'BMAC', '__update_call_slot')
     def __update_call_slot(self, call_id: int):
         self.__calls_flag[call_id] = True
         self.__calls_result[call_id] = self.__calls_dict[call_id].get_result()
@@ -161,6 +163,7 @@ class BinanceMultipleApiCalls(QObject):
 class _SelfTestReceiver(QObject):
 
     @pyqtSlot(dict)
+    @pyqt_try_except(logger, 'BMAC _SelfTestReceiver', 'update_slot')
     def update_slot(self, results: dict):
         for k, v in results.items():
             print('{}\t: {}'.format(k, v))
