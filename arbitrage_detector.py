@@ -5,7 +5,7 @@ from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
 from triangles_finder import TrianglesFinder
-from PyQt5.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
+from PyQt5.QtCore import QCoreApplication, QObject, QThread, pyqtSignal, pyqtSlot
 from custom_logging import get_logger
 logger = get_logger(__name__)
 
@@ -532,6 +532,7 @@ class ArbitrageDetector(QObject):
                 self.arbitrage_disappeared.emit(pairs, actions)
         return None
 
+    @pyqtSlot(str)
     def on_orderbook_updated(self, symbol: str):
         try:
             for triangle in self.symbols[symbol]['triangles']:
@@ -540,6 +541,8 @@ class ArbitrageDetector(QObject):
                     self.report_arbitrage(arbitrage)
         except KeyError:
             return
+        except BaseException as e:
+            logger.exception('Exception in on_orderbook_updated(): {}', str(e))
 
 
 if __name__ == '__main__':
