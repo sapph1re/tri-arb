@@ -3,7 +3,14 @@ from threading import Thread
 from concurrent.futures import Future
 
 
-def call_with_future(fn, future, args, kwargs):
+def safe_cast(val, to_type, default=None):
+    try:
+        return to_type(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _call_with_future(fn, future, args, kwargs):
     try:
         result = fn(*args, **kwargs)
         future.set_result(result)
@@ -14,7 +21,7 @@ def call_with_future(fn, future, args, kwargs):
 def threaded(fn):
     def wrapper(*args, **kwargs):
         future = Future()
-        Thread(target=call_with_future, args=(fn, future, args, kwargs)).start()
+        Thread(target=_call_with_future, args=(fn, future, args, kwargs)).start()
         return future
     return wrapper
 
