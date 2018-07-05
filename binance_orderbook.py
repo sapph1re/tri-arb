@@ -4,8 +4,7 @@ from sortedcontainers import SortedSet
 from operator import neg
 from decimal import Decimal
 
-from PyQt5.QtCore import (QObject, pyqtSignal)
-from PyQt5.QtNetwork import QNetworkReply
+from PyQt5.QtCore import (QObject, pyqtSignal, pyqtSlot)
 
 from binance_api import BinanceApi
 from binance_depth_websocket import BinanceDepthWebsocket
@@ -13,6 +12,10 @@ from custom_logging import get_logger
 
 
 logger = get_logger(__name__)
+
+
+class BOInitException(Exception):
+    pass
 
 
 class BinanceOrderBook(QObject):
@@ -124,60 +127,61 @@ class BinanceOrderBook(QObject):
         self.__initializing = True
         self.__api.depth(slot=self.init_ob_slot, symbol=self.__symbol, limit=100)
 
+    @pyqtSlot()
     def init_ob_slot(self):
-        reply = self.sender()
-        if not isinstance(reply, QNetworkReply):
-            logger.debug('OB {} > init_ob_slot(): Sender is not QNetworkReply object!', self.__symbol)
-            return
-
-        response = bytes(reply.readAll()).decode("utf-8")
-
-        if not response:
-            return
-
         try:
+            reply = self.sender()
+            response = bytes(reply.readAll()).decode("utf-8")
             snapshot = json.loads(response)
+
+            if self.__parse_snapshot(snapshot):
+                logger.info('OB {} > Initialized OB', self.__symbol)
+                self.__valid = True
+                self.ob_updated.emit(self.__symbol)
+                self.__start_time = time.time()
+            else:
+                logger.info('OB {} > OB initialization FAILED! Retrying...', self.__symbol)
+                raise BOInitException
         except json.JSONDecodeError:
             logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, str(response))
-            return
-
-        if self.__parse_snapshot(snapshot):
-            logger.info('OB {} > Initialized OB', self.__symbol)
-            self.__valid = True
-            self.ob_updated.emit(self.__symbol)
-            self.__start_time = time.time()
-            self.__initializing = False
-        else:
-            logger.info('OB {} > OB initialization FAILED! Retrying...', self.__symbol)
+        except BOInitException:
             self.__initializing = False
             self.init_order_book()
+        except Exception as e:
+            logger.error('OB {} > init_ob_slot(): Unknown EXCEPTION: {}', str(e))
+        finally:
+            self.__initializing = False
 
+    @pyqtSlot(dict)
     def update_orderbook(self, update: dict):
-        if self.__initializing or (not update) or (update['s'] != self.__symbol):
-            return
+        try:
+            if self.__initializing or (not update) or (update['s'] != self.__symbol):
+                return
 
-        from_id = update['U']
-        to_id = update['u']
+            from_id = update['U']
+            to_id = update['u']
 
-        # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
-        if time.time() - self.__start_time > self.__timeout:
-            logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}', self.__symbol, self.__lastUpdateId)
-            self.init_order_book()
+            # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
+            if time.time() - self.__start_time > self.__timeout:
+                logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}', self.__symbol, self.__lastUpdateId)
+                self.init_order_book()
 
-        if from_id <= self.__lastUpdateId + 1 <= to_id:
-            logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
-            self.__lastUpdateId = to_id
-            self.__update_bids(update['b'])
-            self.__update_asks(update['a'])
-            self.__valid = True
-            self.ob_updated.emit(self.__symbol)
-        elif self.__lastUpdateId < from_id:
-            logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
-                         self.__symbol, self.__lastUpdateId, from_id, to_id)
-            self.init_order_book()
-        else:
-            logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
-                         self.__symbol, self.__lastUpdateId, from_id, to_id)
+            if from_id <= self.__lastUpdateId + 1 <= to_id:
+                logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
+                self.__lastUpdateId = to_id
+                self.__update_bids(update['b'])
+                self.__update_asks(update['a'])
+                self.__valid = True
+                self.ob_updated.emit(self.__symbol)
+            elif self.__lastUpdateId < from_id:
+                logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
+                             self.__symbol, self.__lastUpdateId, from_id, to_id)
+                self.init_order_book()
+            else:
+                logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
+                             self.__symbol, self.__lastUpdateId, from_id, to_id)
+        except Exception as e:
+            logger.error('OB {} > update_orderbook(): Unknown EXCEPTION: {}', str(e))
 
     def __parse_snapshot(self, snapshot):
         try:

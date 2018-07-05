@@ -5,7 +5,8 @@ import hashlib
 import urllib.parse
 import json
 from typing import List, Dict, Callable
-from PyQt5.QtCore import (QObject, QByteArray, QUrl, QEventLoop, pyqtSignal)
+from PyQt5.QtCore import (QByteArray, QUrl, QEventLoop,
+                          QObject, pyqtSignal, pyqtSlot)
 from PyQt5.QtNetwork import (QNetworkAccessManager, QNetworkRequest, QNetworkReply)
 from custom_logging import get_logger
 
@@ -793,6 +794,7 @@ class BinanceApi(QObject):
             logger.error('BAPI> Request FAILED: No Reply')
             return {'error': 'No Reply'}
 
+    @pyqtSlot(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
     def __call_api_async(self, method, slot, q_request, q_data):
         reply = None
         if method == 'POST':
@@ -807,7 +809,7 @@ class BinanceApi(QObject):
         if reply:
             reply.finished.connect(slot)
         else:
-            logger.error('BAPI> Request FAILED: No Reply')
+            logger.error('BAPI > Request FAILED: No Reply')
 
     def get_symbols_info_json(self) -> List[dict]:
         """
@@ -865,6 +867,7 @@ class _SelfTestReceiver(QObject):
         super(_SelfTestReceiver, self).__init__()
         self.__counter = 0
 
+    @pyqtSlot()
     def receive_slot(self):
         self.__counter += 1
         reply = self.sender()
