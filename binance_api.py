@@ -5,10 +5,11 @@ import hashlib
 import urllib.parse
 import json
 from typing import List, Dict, Callable
-from PyQt5.QtCore import (QByteArray, QUrl, QEventLoop,
+from PyQt5.QtCore import (QByteArray, QUrl, QEventLoop, QTimer,
                           QObject, pyqtSignal, pyqtSlot)
 from PyQt5.QtNetwork import (QNetworkAccessManager, QNetworkRequest, QNetworkReply)
 from custom_logging import get_logger
+from helpers import pyqt_try_except
 
 
 logger = get_logger(__name__)
@@ -171,7 +172,7 @@ class BinanceApi(QObject):
 
     start_call_api_async = pyqtSignal(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
 
-    def __init__(self, api_key, api_secret, parent=None):
+    def __init__(self, api_key, api_secret, reply_timeout: int = 5000, parent=None):
         super(BinanceApi, self).__init__(parent)
 
         self.start_call_api_async.connect(self.__call_api_async)
@@ -179,6 +180,8 @@ class BinanceApi(QObject):
         self.api_key = api_key
         self.api_secret = bytearray(api_secret, encoding='utf-8')
         self.__q_nam = QNetworkAccessManager()
+
+        self.__reply_timeout = reply_timeout
 
         self.__time_delta = 0
         time_response = self.time()
@@ -782,7 +785,13 @@ class BinanceApi(QObject):
             # logger.debug('BAPI > Request without slot defined can slow down the application!')
             loop = QEventLoop()
             reply.finished.connect(loop.quit)
+
+            timer = QTimer()
+            timer.timeout.connect(reply.abort)
+            timer.start(self.__reply_timeout)  # msec
+
             loop.exec()
+
             response = bytes(reply.readAll()).decode("utf-8")
             try:
                 response_json = json.loads(response)
@@ -795,6 +804,7 @@ class BinanceApi(QObject):
             return {'error': 'No Reply'}
 
     @pyqtSlot(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
+    @pyqt_try_except(logger, 'BAPI', '__call_api_async')
     def __call_api_async(self, method, slot, q_request, q_data):
         reply = None
         if method == 'POST':
@@ -808,6 +818,9 @@ class BinanceApi(QObject):
 
         if reply:
             reply.finished.connect(slot)
+            timer = QTimer()
+            timer.timeout.connect(reply.abort)
+            timer.start(self.__reply_timeout)  # msec
         else:
             logger.error('BAPI > Request FAILED: No Reply')
 
@@ -868,6 +881,7 @@ class _SelfTestReceiver(QObject):
         self.__counter = 0
 
     @pyqtSlot()
+    @pyqt_try_except(logger, 'BAPI _SelfTestReceiver', 'receive_slot')
     def receive_slot(self):
         self.__counter += 1
         reply = self.sender()
