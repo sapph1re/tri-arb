@@ -398,7 +398,7 @@ class BinanceApi(QObject):
             kwargs['symbol'] = symbol.upper()
         return self.__call_api(**kwargs)
 
-    def createOrder(self, symbol: str, side: str, type: str, quantity,
+    def createOrder(self, symbol: str, side: str, order_type: str, quantity,
                     timeInForce: str = None, price=None, newClientOrderId: str = None,
                     stopPrice=None, icebergQty=None, recvWindow: int = None,
                     newOrderRespType: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
@@ -411,7 +411,7 @@ class BinanceApi(QObject):
             Обязательные:
                 :param symbol: пара
                 :param side: тип ордера (BUY либо SELL)
-                :param type: тип ордера (LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT,
+                :param order_type: тип ордера (LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT,
                     TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER)
                 :param quantity: количество к покупке
                 timestamp: текущее время в миллисекундах (в коде, выложенном здесь, проставляется автоматически,
@@ -464,7 +464,7 @@ class BinanceApi(QObject):
                   'slot': slot,
                   'symbol': symbol.upper(),
                   'side': side.upper(),
-                  'type': type.upper(),
+                  'type': order_type.upper(),
                   'quantity': quantity}
         if timeInForce:
             kwargs['timeInForce'] = timeInForce
@@ -482,7 +482,7 @@ class BinanceApi(QObject):
             kwargs['newOrderRespType'] = newOrderRespType
         return self.__call_api(**kwargs)
 
-    def testOrder(self, symbol: str, side: str, type: str, quantity,
+    def testOrder(self, symbol: str, side: str, order_type: str, quantity,
                   timeInForce: str = None, price=None, newClientOrderId: str = None,
                   stopPrice=None, icebergQty=None, recvWindow: int = None,
                   newOrderRespType: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
@@ -496,7 +496,7 @@ class BinanceApi(QObject):
             Обязательные:
                 :param symbol: пара
                 :param side: тип ордера (BUY либо SELL)
-                :param type: тип ордера (LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT,
+                :param order_type: тип ордера (LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT,
                     TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER)
                 :param quantity: количество к покупке
                 timestamp: текущее время в миллисекундах (в коде, выложенном здесь, проставляется автоматически,
@@ -526,7 +526,7 @@ class BinanceApi(QObject):
                   'slot': slot,
                   'symbol': symbol.upper(),
                   'side': side.upper(),
-                  'type': type.upper(),
+                  'type': order_type.upper(),
                   'quantity': quantity}
         if timeInForce:
             kwargs['timeInForce'] = timeInForce
