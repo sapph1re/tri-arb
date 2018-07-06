@@ -1,5 +1,6 @@
 import logging
 import string
+import sys
 
 
 class GracefulStringFormatter(string.Formatter):
@@ -92,6 +93,7 @@ def get_logger(name):
     handler_debug = logging.FileHandler('debug.log', 'w')
     handler_debug.setLevel(logging.DEBUG)
     handler_debug.setFormatter(log_formatter_debug)
+    handler_debug.flush = sys.stdout.flush
     logger.addHandler(handler_debug)
 
     # writing a general log to console
@@ -101,6 +103,7 @@ def get_logger(name):
     handler_console = logging.StreamHandler()
     handler_console.setLevel(logging.INFO)
     handler_console.setFormatter(log_formatter_info)
+    handler_console.flush = sys.stdout.flush
     logger.addHandler(handler_console)
 
     logger = StyleAdapter(logger)
