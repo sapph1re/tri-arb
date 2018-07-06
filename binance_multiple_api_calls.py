@@ -31,7 +31,7 @@ class BinanceApiCall(QObject):
 
         self.__result = None
 
-    def get_id(self) -> uuid:
+    def get_id(self) -> int:
         return self.__id
 
     def get_method(self) -> Callable:
@@ -65,10 +65,14 @@ class BinanceApiCall(QObject):
 
 class BinanceMultipleApiCalls(QObject):
 
+    _static_id = 0
     finished = pyqtSignal(dict)
 
     def __init__(self, api: BinanceApi, calls_list: List[BinanceApiCall], parent=None):
         super(BinanceMultipleApiCalls, self).__init__(parent=parent)
+
+        self.__id = BinanceMultipleApiCalls.__static_id
+        BinanceMultipleApiCalls.__static_id += 1
 
         self.__api = api
         self.__calls_dict = {}
@@ -81,6 +85,9 @@ class BinanceMultipleApiCalls(QObject):
             self.__calls_result[call_id] = None
 
         self.__running = False
+
+    def get_id(self) -> int:
+        return self.__id
 
     def get_api(self) -> BinanceApi:
         return self.__api
