@@ -162,11 +162,14 @@ class ArbitrageMonitor(QObject):
         arb, original_opportunity_id, actions_by_call_id = self.context_for_check_actual_arbitrage[multicall_id]
         orderbooks = []
         profits = {}
-        z_spend = Decimal(0)
         for call_id, depth in depth_results.items():
             action = actions_by_call_id[call_id]
             side = {'sell': 'bids', 'buy': 'asks'}[action.action]
-            ob = [(Decimal(price), Decimal(value)) for price, value, dummy in depth[side]]
+            try:
+                ob = [(Decimal(price), Decimal(value)) for price, value, dummy in depth[side]]
+            except KeyError:
+                logger.error('Call {} returned bad result: {}', call_id, depth)
+                return
             orderbooks.append(ob)
             counter_amount = self.calculate_counter_amount(action.amount, action.price, ob)
             for j in [0, 1]:
@@ -178,13 +181,11 @@ class ArbitrageMonitor(QObject):
             elif action.action == 'buy':
                 profits[action.pair[0]] += action.amount * (1 - TRADE_FEE)
                 profits[action.pair[1]] -= counter_amount
-                if action.pair[1] == arb.currency_z:
-                    z_spend += counter_amount
-        profit_rel = profits[arb.currency_z] / z_spend
+        profit_rel = profits[arb.currency_z] / arb.amount_z
         arb_actual = Arbitrage(
             actions=arb.actions,
             currency_z=arb.currency_z,
-            amount_z=z_spend,
+            amount_z=arb.amount_z,
             profit_z=profits[arb.currency_z],
             profit_z_rel=profit_rel,
             profit_y=profits[arb.currency_y],
@@ -232,7 +233,18 @@ class ArbitrageMonitor(QObject):
     def _on_arbitrage_disappeared(self, pairs: str, actions: str):
         if pairs not in self.opportunities:
             self.opportunities[pairs] = {}
-        self.opportunities[pairs][actions] = {}
+        if actions not in self.opportunities[pairs]:
+            self.opportunities[pairs][actions] = {}
+        if self.opportunities[pairs][actions]:
+            # update lifetimes
+            new_lifetime = int(1000 * time.time()) - self.opportunities[pairs][actions]['detected'].appeared_at
+            self.opportunities[pairs][actions]['detected'].lifetime = new_lifetime
+            self.opportunities[pairs][actions]['detected'].save()
+            new_lifetime = int(1000 * time.time()) - self.opportunities[pairs][actions]['actual'].appeared_at
+            self.opportunities[pairs][actions]['actual'].lifetime = new_lifetime
+            self.opportunities[pairs][actions]['actual'].save()
+            # remove the opportunities
+            self.opportunities[pairs][actions] = {}
 
 
 if __name__ == '__main__':
