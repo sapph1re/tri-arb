@@ -38,6 +38,8 @@ class DBArbitrageOpportunity(BaseModel):
     profit_rel_max = pw.DecimalField(max_digits=20, decimal_places=8, auto_round=True)
     lifetime = pw.BigIntegerField()   # in milliseconds
     appeared_at = pw.BigIntegerField()   # unix timestamp in milliseconds
+    depth_avg = pw.IntegerField()
+    depth_max = pw.IntegerField()
 
     class Meta:
         table_name = 'arbitrage_opportunity'
@@ -109,7 +111,9 @@ class ArbitrageMonitor(QObject):
                 profit_rel_avg=arb.profit_z_rel,
                 profit_rel_max=arb.profit_z_rel,
                 lifetime=1,
-                appeared_at=int(1000 * time.time())
+                appeared_at=int(1000 * time.time()),
+                depth_avg=arb.arb_depth,
+                depth_max=arb.arb_depth
             )
         else:
             return DBArbitrageOpportunityActual.create(
@@ -130,7 +134,9 @@ class ArbitrageMonitor(QObject):
                 profit_rel_max=arb.profit_z_rel,
                 lifetime=1,
                 appeared_at=int(1000 * time.time()),
-                original_opportunity_id=original_id
+                original_opportunity_id=original_id,
+                depth_avg=arb.arb_depth,
+                depth_max=arb.arb_depth
             )
 
     @staticmethod
@@ -145,6 +151,8 @@ class ArbitrageMonitor(QObject):
             opp.profit_z_max = arb.profit_z
         if arb.profit_z_rel > opp.profit_rel_max:
             opp.profit_rel_max = arb.profit_z_rel
+        if arb.arb_depth > opp.depth_max:
+            opp.depth_max = arb.arb_depth
         new_lifetime = int(1000 * time.time()) - opp.appeared_at
         if new_lifetime == 0:
             new_lifetime = 1
@@ -154,6 +162,7 @@ class ArbitrageMonitor(QObject):
         opp.profit_z_avg = opp.profit_z_avg * lifetime_rel_diff + arb.profit_z * (1 - lifetime_rel_diff)
         opp.amount_z_avg = opp.amount_z_avg * lifetime_rel_diff + arb.amount_z * (1 - lifetime_rel_diff)
         opp.profit_rel_avg = opp.profit_rel_avg * lifetime_rel_diff + arb.profit_z_rel * (1 - lifetime_rel_diff)
+        opp.depth_avg = opp.depth_avg * lifetime_rel_diff + arb.arb_depth * (1 - lifetime_rel_diff)
         opp.lifetime = new_lifetime
         opp.save()
 
@@ -192,7 +201,8 @@ class ArbitrageMonitor(QObject):
             currency_y=arb.currency_y,
             profit_x=profits[arb.currency_x],
             currency_x=arb.currency_x,
-            orderbooks=tuple(orderbooks)
+            orderbooks=tuple(orderbooks),
+            arb_depth=arb.arb_depth
         )
         pairs = '{} {} {}'.format(arb.actions[0].pair, arb.actions[1].pair, arb.actions[2].pair)
         actions = '{} {} {}'.format(arb.actions[0].action, arb.actions[1].action, arb.actions[2].action)
