@@ -31,7 +31,7 @@ class BinanceApiCall(QObject):
 
         self.__result = None
 
-    def get_id(self) -> uuid:
+    def get_id(self) -> int:
         return self.__id
 
     def get_method(self) -> Callable:
@@ -65,10 +65,14 @@ class BinanceApiCall(QObject):
 
 class BinanceMultipleApiCalls(QObject):
 
-    finished = pyqtSignal(dict)
+    __static_id = 0
+    finished = pyqtSignal(int, dict)
 
     def __init__(self, api: BinanceApi, calls_list: List[BinanceApiCall], parent=None):
         super(BinanceMultipleApiCalls, self).__init__(parent=parent)
+
+        self.__id = BinanceMultipleApiCalls.__static_id
+        BinanceMultipleApiCalls.__static_id += 1
 
         self.__api = api
         self.__calls_dict = {}
@@ -81,6 +85,9 @@ class BinanceMultipleApiCalls(QObject):
             self.__calls_result[call_id] = None
 
         self.__running = False
+
+    def get_id(self) -> int:
+        return self.__id
 
     def get_api(self) -> BinanceApi:
         return self.__api
@@ -151,25 +158,24 @@ class BinanceMultipleApiCalls(QObject):
         flags = [v for _, v in self.__calls_flag.items()]
         if all(flags):
             self.__running = False
-            self.finished.emit(self.__calls_result)
+            self.finished.emit(self.__id, self.__calls_result)
 
     def get_results(self):
         if self.__running:
             return None
-
         return self.__calls_result
 
 
 class _SelfTestReceiver(QObject):
 
-    @pyqtSlot(dict)
+    @pyqtSlot(int, dict)
     @pyqt_try_except(logger, 'BMAC _SelfTestReceiver', 'update_slot')
-    def update_slot(self, results: dict):
+    def update_slot(self, id: int, results: dict):
         for k, v in results.items():
             print('{}\t: {}'.format(k, v))
 
 
-def _main():
+def main():
     from PyQt5.QtCore import QCoreApplication, QTimer
     from config import API_KEY, API_SECRET
 
@@ -211,4 +217,4 @@ def _main():
 
 
 if __name__ == '__main__':
-    _main()
+    main()

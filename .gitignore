@@ -1,4 +1,5 @@
 .idea/
+ob_*/
 *.txt
 *.log
 config*
