@@ -15,7 +15,7 @@ from helpers import pyqt_try_except
 logger = get_logger(__name__)
 
 
-class BOInitException(Exception):
+class OBInitException(Exception):
     pass
 
 
@@ -74,6 +74,9 @@ class BinanceOrderBook(QObject):
     def __on_ws_disconnected(self):
         self.__valid = False
 
+    def get_update_id(self) -> int:
+        return self.__lastUpdateId
+
     def get_base(self) -> str:
         return self.__base
 
@@ -112,20 +115,12 @@ class BinanceOrderBook(QObject):
     def get_websocket(self):
         return self.__websocket
 
-    def save_to(self, filename):
-        bids = self.__sorted_copy(self.__bids)
-        asks = self.__sorted_copy(self.__asks)
-        data = {'lastUpdateId': self.__lastUpdateId,
-                'bids': bids,
-                'asks': asks}
-        with open(filename, 'w') as fp:
-            json.dump(data, fp, indent=2, ensure_ascii=False)
-
     def init_order_book(self):
         if self.__initializing:
             return
 
         self.__initializing = True
+        self.__valid = False
         self.__api.depth(slot=self.init_ob_slot, symbol=self.__symbol, limit=100)
 
     @pyqtSlot()
@@ -136,16 +131,16 @@ class BinanceOrderBook(QObject):
             snapshot = json.loads(response)
 
             if self.__parse_snapshot(snapshot):
-                logger.info('OB {} > Initialized OB', self.__symbol)
+                logger.debug('OB {} > Initialized', self.__symbol)
                 self.__valid = True
                 self.ob_updated.emit(self.__symbol)
                 self.__start_time = time.time()
             else:
                 logger.info('OB {} > OB initialization FAILED! Retrying...', self.__symbol)
-                raise BOInitException
+                raise OBInitException
         except json.JSONDecodeError:
             logger.error('OB {} > JSON Decode FAILED: {}', self.__symbol, str(response))
-        except BOInitException:
+        except OBInitException:
             self.__initializing = False
             self.init_order_book()
         except BaseException as e:
@@ -154,7 +149,7 @@ class BinanceOrderBook(QObject):
             self.__initializing = False
 
     @pyqtSlot(dict)
-    @pyqt_try_except(logger, 'BO', 'update_orderbook')
+    @pyqt_try_except(logger, 'OB', 'update_orderbook')
     def update_orderbook(self, update: dict):
         if self.__initializing or (not update) or (update['s'] != self.__symbol):
             return
@@ -164,10 +159,9 @@ class BinanceOrderBook(QObject):
 
         # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
         if time.time() - self.__start_time > self.__timeout:
-            logger.debug('OB {} > Update: Snapshot is OUT OF DATE! ### {}', self.__symbol, self.__lastUpdateId)
+            logger.debug('OB {} > Update: Time to REINIT snapshot! ### {}', self.__symbol, self.__lastUpdateId)
             self.init_order_book()
-
-        if from_id <= self.__lastUpdateId + 1 <= to_id:
+        elif from_id <= self.__lastUpdateId + 1 <= to_id:
             logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
@@ -185,6 +179,12 @@ class BinanceOrderBook(QObject):
     def __parse_snapshot(self, snapshot):
         try:
             self.__lastUpdateId = snapshot['lastUpdateId']
+
+            self.__bids.clear()
+            self.__asks.clear()
+            self.__bids_prices.clear()
+            self.__asks_prices.clear()
+
             self.__update_bids(snapshot['bids'])
             self.__update_asks(snapshot['asks'])
         except LookupError:
@@ -207,33 +207,39 @@ class BinanceOrderBook(QObject):
         for each in bids_list:
             price = Decimal(each[0])
             if self.__is_str_zero(each[1]):
-                try:
-                    del self.__bids[price]
-                except KeyError:
-                    pass
+                self.__bids.pop(price, None)
                 self.__bids_prices.discard(price)
             else:
                 self.__bids[price] = Decimal(each[1])
                 if price not in self.__bids_prices:
                     self.__bids_prices.add(price)
         self.__bids_changed = True
-        # print('__update_bids() took {:0.3f} µs'.format((time.time() - t)*1000000))
 
     def __update_asks(self, asks_list):
         for each in asks_list:
             price = Decimal(each[0])
             if self.__is_str_zero(each[1]):
-                try:
-                    del self.__asks[price]
-                except KeyError:
-                    pass
+                self.__asks.pop(price, None)
                 self.__asks_prices.discard(price)
             else:
                 self.__asks[price] = Decimal(each[1])
                 if price not in self.__asks_prices:
                     self.__asks_prices.add(price)
         self.__asks_changed = True
-        # print('__update_asks() took {:0.3f} µs'.format((time.time() - t)*1000000))
+
+    def get_json(self):
+        bids = [(str(price), str(qty)) for price, qty in self.get_bids()]
+        asks = [(str(price), str(qty)) for price, qty in self.get_asks()]
+        data = {'lastUpdateId': self.__lastUpdateId,
+                'symbol': self.__symbol,
+                'bids': bids,
+                'asks': asks}
+        return data
+
+    def save_to(self, filename):
+        data = self.get_json()
+        with open(filename, 'w') as fp:
+            json.dump(data, fp, indent=2, ensure_ascii=False)
 
     def test_load_snapshot(self, filename):
         with open(filename, 'r') as fp:
