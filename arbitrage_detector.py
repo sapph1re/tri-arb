@@ -1,7 +1,7 @@
 import sys
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, MIN_ARBITRAGE_DEPTH, MAX_ARBITRAGE_DEPTH
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
 from triangles_finder import TrianglesFinder
@@ -420,7 +420,9 @@ class ArbitrageDetector(QObject):
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
-        if prices is not None:  # potential arbitrage exists
+            if depth_level >= MAX_ARBITRAGE_DEPTH:
+                break
+        if depth_level >= MIN_ARBITRAGE_DEPTH:  # potential arbitrage exists
             orderbooks = (bids_saved['yz'], asks_saved['xz'], bids_saved['xy'])
             # make amounts comply with order size requirements
             normalized = self.normalize_amounts_and_recalculate(
@@ -495,7 +497,9 @@ class ArbitrageDetector(QObject):
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
-        if prices is not None:  # potential arbitrage exists
+            if depth_level >= MAX_ARBITRAGE_DEPTH:
+                break
+        if depth_level >= MIN_ARBITRAGE_DEPTH:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
             normalized = self.normalize_amounts_and_recalculate(
