@@ -1,7 +1,7 @@
 import sys
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, MIN_ARBITRAGE_DEPTH, MAX_ARBITRAGE_DEPTH
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
 from triangles_finder import TrianglesFinder
@@ -27,7 +27,7 @@ class MarketAction:
 class Arbitrage:
     def __init__(
             self, actions, currency_z, amount_z, profit_z, profit_z_rel,
-            profit_x, currency_x, profit_y, currency_y, orderbooks
+            profit_x, currency_x, profit_y, currency_y, orderbooks, arb_depth
     ):
         self.actions = actions
         self.currency_z = currency_z
@@ -39,6 +39,7 @@ class Arbitrage:
         self.profit_x = profit_x
         self.currency_x = currency_x
         self.orderbooks = orderbooks
+        self.arb_depth = arb_depth
 
     def __str__(self):
         actions_str = ' -> '.join([str(action) for action in self.actions])
@@ -387,6 +388,7 @@ class ArbitrageDetector(QObject):
         amount_z_spend_total = Decimal(0)
         profit_z_total = Decimal(0)
         prices = None
+        depth_level = 0
         while 1:
             # check profitability
             try:
@@ -395,6 +397,7 @@ class ArbitrageDetector(QObject):
                 break
             if profit_rel < self.min_profit:
                 break
+            depth_level += 1
             # calculate trade amounts available on this level
             amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
                 'sell buy sell', bids['yz'][0], asks['xz'][0], bids['xy'][0]
@@ -417,7 +420,9 @@ class ArbitrageDetector(QObject):
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
-        if prices is not None:  # potential arbitrage exists
+            if depth_level >= MAX_ARBITRAGE_DEPTH:
+                break
+        if depth_level >= MIN_ARBITRAGE_DEPTH:  # potential arbitrage exists
             orderbooks = (bids_saved['yz'], asks_saved['xz'], bids_saved['xy'])
             # make amounts comply with order size requirements
             normalized = self.normalize_amounts_and_recalculate(
@@ -449,7 +454,8 @@ class ArbitrageDetector(QObject):
                     currency_y=currency_y,
                     profit_x=normalized['x_profit'],
                     currency_x=currency_x,
-                    orderbooks=orderbooks
+                    orderbooks=orderbooks,
+                    arb_depth=depth_level
                 )
 
         # checking triangle in another direction: buy Y/Z, sell X/Z, buy X/Y
@@ -459,6 +465,7 @@ class ArbitrageDetector(QObject):
         amount_z_spend_total = Decimal(0)
         profit_z_total = Decimal(0)
         prices = None
+        depth_level = 0
         while 1:
             # check profitability
             try:
@@ -467,6 +474,7 @@ class ArbitrageDetector(QObject):
                 break
             if profit_rel < self.min_profit:
                 break
+            depth_level += 1
             # calculate trade amounts available on this level
             amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
                 'buy sell buy', asks['yz'][0], bids['xz'][0], asks['xy'][0]
@@ -489,7 +497,9 @@ class ArbitrageDetector(QObject):
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
-        if prices is not None:  # potential arbitrage exists
+            if depth_level >= MAX_ARBITRAGE_DEPTH:
+                break
+        if depth_level >= MIN_ARBITRAGE_DEPTH:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
             normalized = self.normalize_amounts_and_recalculate(
@@ -521,7 +531,8 @@ class ArbitrageDetector(QObject):
                     currency_y=currency_y,
                     profit_x=normalized['x_profit'],
                     currency_x=currency_x,
-                    orderbooks=orderbooks
+                    orderbooks=orderbooks,
+                    arb_depth=depth_level
                 )
 
         # no arbitrage found
