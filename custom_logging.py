@@ -1,6 +1,6 @@
 import logging
 import string
-import sys
+from logging.handlers import RotatingFileHandler
 
 
 class GracefulStringFormatter(string.Formatter):
@@ -73,6 +73,19 @@ class StyleAdapter(logging.LoggerAdapter):
             self.logger._log(level, Message(msg, args), (), **kwargs)
 
 
+format_main_debug = '{asctime}\t{levelname}\t[{filename}:{lineno} <> {funcName}() <> {threadName}]\n{message}\n'
+log_formatter_debug = GracefulFormatter(format_main_debug)
+handler_debug = RotatingFileHandler('debug.log', mode='a', maxBytes=10000000)
+handler_debug.setLevel(logging.DEBUG)
+handler_debug.setFormatter(log_formatter_debug)
+
+format_main_info = '{asctime}\t{levelname}\t[{filename}]\t{message}'
+log_formatter_info = GracefulFormatter(format_main_info)
+handler_console = logging.StreamHandler()
+handler_console.setLevel(logging.INFO)
+handler_console.setFormatter(log_formatter_info)
+
+
 def get_logger(name):
     """
     Usage: logger = get_logger(__name__)
@@ -83,27 +96,10 @@ def get_logger(name):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
 
-    #  format_krot = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s[LINE:%(lineno)d]\n%(message)s\n'
-    #  format_saph = '{asctime} {levelname} [{threadName}] [{name}:{funcName}] {message}'
-
     # writing a detailed debug log to debug.log file
-    format_main_debug = '{asctime}\t{levelname}\t[{filename}:{lineno} <> {funcName}() <> {threadName}]\n{message}\n'
-    format_time_debug = '%H:%M:%S'
-    log_formatter_debug = GracefulFormatter(format_main_debug, format_time_debug)
-    handler_debug = logging.FileHandler('debug.log', 'w')
-    handler_debug.setLevel(logging.DEBUG)
-    handler_debug.setFormatter(log_formatter_debug)
-    handler_debug.flush = sys.stdout.flush
     logger.addHandler(handler_debug)
 
     # writing a general log to console
-    format_main_info = '{asctime}\t{levelname}\t[{filename}]\t{message}'
-    format_time_info = '%H:%M:%S'
-    log_formatter_info = GracefulFormatter(format_main_info, format_time_info)
-    handler_console = logging.StreamHandler()
-    handler_console.setLevel(logging.INFO)
-    handler_console.setFormatter(log_formatter_info)
-    handler_console.flush = sys.stdout.flush
     logger.addHandler(handler_console)
 
     logger = StyleAdapter(logger)
