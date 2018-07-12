@@ -31,7 +31,7 @@ class BinanceOBVerificator(QObject):
         self.__snapshots = {}
         self.__new_ob = order_book
         self.__new_ob_too_new_flag = False
-        self.__dump_threshold = 50
+        self.__dump_threshold = 75
 
         self.__directory = './ob_verification/'
         try:
@@ -252,23 +252,35 @@ def main():
     from binance_orderbook_scrapper import BinanceOBScrapper
     from config import API_KEY, API_SECRET
 
-    ob_logger = logging.getLogger('binance_orderbook')
-    ob_logger.setLevel(logging.INFO)
+    # ob_logger = logging.getLogger('binance_orderbook')
+    # ob_logger.setLevel(logging.INFO)
 
     app = QCoreApplication(sys.argv)
 
     api = BinanceApi(API_KEY, API_SECRET)
 
-    symbols = [('ETH', 'BTC'),
-               # ('ETC', 'BTC'),
-               # ('EOS', 'BTC'),
-               # ('BCD', 'BTC'),
-               # ('BNB', 'BTC'),
-               # ('BTC', 'USDT'),
-               ('ETH', 'USDT'),
-               # ('ETC', 'USDT'),
-               ('EOS', 'USDT'),
-               ('BNB', 'USDT')]
+    symbols_set = {('ETH', 'BTC'),
+                   ('ETC', 'BTC'),
+                   ('EOS', 'BTC'),
+                   ('BCD', 'BTC'),
+                   ('BNB', 'BTC'),
+                   ('BTC', 'USDT'),
+                   ('ETH', 'USDT'),
+                   ('ETC', 'USDT'),
+                   ('EOS', 'USDT'),
+                   ('BNB', 'USDT')}
+
+    top_coins = {'BTC', 'ETH', 'XRP', 'ETC', 'EOS'}  # , 'LTC', 'XLM', 'ADA', 'TRX', 'ICX'}
+    bot_coins = {'ICN', 'SNGLS', 'OAX', 'MTH', 'STORJ'}  # , 'MOD', 'GRS', 'TNT', 'VIBE', 'RDN'}
+    coins_list = top_coins.union(bot_coins)
+    quotes_list = {'BTC', 'ETH', 'BNB', 'USDT'}
+    all_symbols_dict = api.get_symbols_info()
+
+    symbols_set = set()
+    for quote in quotes_list:
+        for coin in coins_list:
+            if (coin + quote) in all_symbols_dict:
+                symbols_set.add((coin, quote))
 
     minutes = 3  # in minutes
     reverification_time = minutes * 60  # in seconds
@@ -276,10 +288,10 @@ def main():
     ob_list = []
     sc_list = []
     ws = BinanceDepthWebsocket()
-    for base, quote in symbols:
+    for base, quote in symbols_set:
         ob = BinanceOrderBook(api, base, quote, ws, reinit_timeout=reverification_time)
         ob_list.append(ob)
-        sc = BinanceOBScrapper(api, base, quote, ws, reinit_timeout=1)
+        sc = BinanceOBScrapper(api, base, quote, ws, reinit_timeout=5)
         sc_list.append(sc)
         QTimer.singleShot(2000, sc.init_ob)
     vc = OBVerificationController(api, ob_list, reverification_time=reverification_time)
