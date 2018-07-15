@@ -1,7 +1,8 @@
 from typing import List
-from decimal import Decimal
+from collections import deque
+from PyQt5.QtCore import QThread, pyqtSignal
 from binance_api import BinanceApi
-from PyQt5.QtCore import QThread
+from binance_account_info import BinanceAccountInfo
 from custom_logging import get_logger
 
 
@@ -14,9 +15,11 @@ class BinanceActionException(Exception):
 
 class BinanceSingleAction:
 
-    def __init__(self, symbol: str, side: str, quantity, price, order_type='LIMIT',
-                 timeInForce: str = 'FOK', newClientOrderId: str = None):
+    def __init__(self, base: str, quote: str, symbol: str, side: str, quantity, price,
+                 order_type='LIMIT', timeInForce: str = 'FOK', newClientOrderId: str = None):
         """
+        :param base: EOS/USDT -> BTC
+        :param quote: EOS/USDT -> USDT
         :param symbol: пара (т.е. 'BTCUSDT', 'ETHBTC', 'EOSETH')
         :param side: тип ордера (BUY либо SELL)
         :param quantity: количество к покупке
@@ -32,6 +35,8 @@ class BinanceSingleAction:
         :param newClientOrderId: Идентификатор ордера, который вы сами придумаете (строка).
                     Если не указан, генерится автоматически.
         """
+        self.base = base
+        self.quote = quote
         self.symbol = symbol.upper()
         self.side = side.upper()
         self.quantity = quantity
@@ -43,17 +48,19 @@ class BinanceSingleAction:
 
 class BinanceActionsExecutor(QThread):
 
+    action_executed = pyqtSignal()
+
     def __init__(self, api_key, api_secret, actions_list: List[BinanceSingleAction],
-                 profits_list: List[Decimal] = None, parent=None):
+                 account_info: BinanceAccountInfo = None, parent=None):
         super(BinanceActionsExecutor, self).__init__(parent=parent)
 
         self.__api = BinanceApi(api_key, api_secret)
         self.__actions_list = actions_list
 
-        self.__pretty_str = ''        # self.__profits_list = profits_list
-        # self.__check_profits = False
-        # if self.__profits_list:
-        #     self.__check_profits = True
+        self.__account_info = account_info if account_info is not None else BinanceAccountInfo(self.__api)
+        self.action_executed.connect(self.__account_info.update_info_async)
+
+        self.__pretty_str = ''
         self.__set_pretty_str(actions_list)
 
     def __str__(self):
@@ -69,22 +76,13 @@ class BinanceActionsExecutor(QThread):
         self.__actions_list = actions_list
         self.__set_pretty_str(actions_list)
 
-    # def get_profits_list(self) -> List[Decimal]:
-    #     return self.__profits_list
-    #
-    # def set_profit_list(self, profits_list: List[Decimal]):
-    #     self.__profits_list = profits_list
-    #     self.__check_profits = False
-    #     if self.__profits_list:
-    #         self.__check_profits = True
-
     def run(self):
         revert_flag = False
+        actions_list = self.__get_executable_actions_list()
 
-        i = 0
-        actions_length = len(self.__actions_list)
+        actions_length = len(actions_list)
         for i in range(actions_length):
-            action = self.__actions_list[i]
+            action = actions_list[i]
             reply_json = self.__try_create_order_three_times(action)
 
             if self.__is_order_filled(reply_json):
@@ -106,7 +104,7 @@ class BinanceActionsExecutor(QThread):
             revert_side = True
 
         for i in range(start_index, end_index, step):
-            action = self.__actions_list[i]
+            action = actions_list[i]
             action.type = 'MARKET'
             if revert_side:
                 action.side = 'BUY' if action.side == 'SELL' else 'SELL'
@@ -117,6 +115,26 @@ class BinanceActionsExecutor(QThread):
                 # TODO: Подумать: а какие варианты можно ещё придумать, если маркет ордер фейлится...
                 logger.error('BAE {} > Continue arbitrage as market orders FAILED: {}', str(self), str(reply_json))
                 break
+
+    def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
+        shift = 0
+        actions_list = self.__actions_list
+        for action in actions_list:
+            side = action.side
+            base = action.base
+            quote = action.quote
+            quantity = action.quantity
+            price = action.price
+
+            asset = quote if side == 'BUY' else base
+            amount = quantity * price
+            balance = self.__account_info.get_balance(asset)
+            if balance < amount:
+                shift -= 1
+            else:
+                dq = deque(actions_list)
+                return dq.rotate(shift)
+        return []
 
     def __try_create_order_three_times(self, action: BinanceSingleAction):
         reply_json = None
@@ -138,6 +156,7 @@ class BinanceActionsExecutor(QThread):
                 cur_order_id = reply_json['orderId']
                 status = self.__check_new_order_status(cur_symbol, cur_order_id)
             if status == 'FILLED':
+                self.action_executed.emit()
                 return True
         return False
 
