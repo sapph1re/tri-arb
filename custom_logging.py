@@ -1,9 +1,18 @@
 import logging
 import string
+from logging.handlers import RotatingFileHandler
 
 
 class GracefulStringFormatter(string.Formatter):
+    """
+    Avoids exceptions when an unexpected value is passed to logger,
+    substitutes the "bad" values with the specified text instead.
+    """
     def __init__(self, missing='NONE', bad_fmt='BADFORMAT'):
+        """
+        :param missing: text to display when the value is None
+        :param bad_fmt: text to display when the value can't be formatted
+        """
         self.missing = missing
         self.bad_fmt = bad_fmt
 
@@ -17,7 +26,7 @@ class GracefulStringFormatter(string.Formatter):
 
     def format_field(self, value, spec):
         # handle an invalid format
-        if value==None:
+        if value is None:
             return self.missing
         try:
             return super().format_field(value, spec)
@@ -28,12 +37,14 @@ class GracefulStringFormatter(string.Formatter):
                 raise
 
 
-string_formatter = GracefulStringFormatter()
+string_formatter = GracefulStringFormatter(missing='NONE', bad_fmt='BADFORMAT')
 
 
 class GracefulFormatter(logging.Formatter):
-    def __init__(self, fmt=None, datefmt=None, style='{', missing='NONE', bad_fmt='BADFORMAT'):
-        self.missing, self.bad_fmt = missing, bad_fmt
+    """
+    Formatter that uses the above failsafe string formatting
+    """
+    def __init__(self, fmt=None, datefmt=None, style='{'):
         super().__init__(fmt, datefmt, style)
 
     def formatMessage(self, record):
@@ -50,6 +61,9 @@ class Message(object):
 
 
 class StyleAdapter(logging.LoggerAdapter):
+    """
+    Use this adapter to enable the "{}" notation for parameters
+    """
     def __init__(self, logger, extra=None):
         super(StyleAdapter, self).__init__(logger, extra or {})
 
@@ -59,29 +73,33 @@ class StyleAdapter(logging.LoggerAdapter):
             self.logger._log(level, Message(msg, args), (), **kwargs)
 
 
+format_main_debug = '{asctime}\t{levelname}\t[{filename}:{lineno} <> {funcName}() <> {threadName}]\n{message}\n'
+log_formatter_debug = GracefulFormatter(format_main_debug)
+handler_debug = RotatingFileHandler('debug.log', mode='a', maxBytes=10000000)
+handler_debug.setLevel(logging.DEBUG)
+handler_debug.setFormatter(log_formatter_debug)
+
+format_main_info = '{asctime}\t{levelname}\t[{filename}]\t{message}'
+log_formatter_info = GracefulFormatter(format_main_info)
+handler_console = logging.StreamHandler()
+handler_console.setLevel(logging.INFO)
+handler_console.setFormatter(log_formatter_info)
+
+
 def get_logger(name):
+    """
+    Usage: logger = get_logger(__name__)
+    logger.info('Some log message here: {}', message)
+    :param name: logger name, usually __name__ is fine
+    :return: logger
+    """
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
 
-    #  format_krot = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s[LINE:%(lineno)d]\n%(message)s\n'
-    #  format_saph = '{asctime} {levelname} [{threadName}] [{name}:{funcName}] {message}'
-
     # writing a detailed debug log to debug.log file
-    format_main_debug = '{asctime}\t{levelname}\t[{filename}:{lineno} <> {funcName}() <> {threadName}]\n{message}\n'
-    format_time_debug = '%H:%M:%S'
-    log_formatter_debug = GracefulFormatter(format_main_debug, format_time_debug)
-    handler_debug = logging.FileHandler('debug.log')
-    handler_debug.setLevel(logging.DEBUG)
-    handler_debug.setFormatter(log_formatter_debug)
     logger.addHandler(handler_debug)
 
     # writing a general log to console
-    format_main_info = '{asctime}\t{levelname}\t[{filename}]\t{message}'
-    format_time_info = '%H:%M:%S'
-    log_formatter_info = GracefulFormatter(format_main_info, format_time_info)
-    handler_console = logging.StreamHandler()
-    handler_console.setLevel(logging.INFO)
-    handler_console.setFormatter(log_formatter_info)
     logger.addHandler(handler_console)
 
     logger = StyleAdapter(logger)
