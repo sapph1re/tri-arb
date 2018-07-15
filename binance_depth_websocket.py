@@ -147,7 +147,7 @@ class BinanceDepthWebsocket(QObject):
             data = {'error': 'Response structure WRONG, no "data" field: {}'.format(json_data)}
         except BaseException as e:
             logger.exception('WS > __on_message(): Unknown EXCEPTION: {}', str(e))
-            data = {'error': 'Unknown ECEPTION: {}'.format(str(e))}
+            data = {'error': 'Unknown EXCEPTION: {}'.format(str(e))}
         finally:
             self.symbol_updated.emit(data)
 
