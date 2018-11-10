@@ -204,6 +204,24 @@ class ArbitrageMonitor(QObject):
             orderbooks=tuple(orderbooks),
             arb_depth=arb.arb_depth
         )
+        # detect negative actual profits, which seems to be a persistant issue
+        if profits[arb.currency_z] < 0 or profits[arb.currency_y] < 0 or profits[arb.currency_x] < 0:
+            logger.warning(
+                'Negative actual profits detected: {} {}, {} {}, {} {}',
+                arb_actual.profit_x, arb_actual.currency_x,
+                arb_actual.profit_y, arb_actual.currency_y,
+                arb_actual.profit_z, arb_actual.currency_z
+            )
+            logger.warning(
+                'Expected profits: {} {}, {} {}, {} {}',
+                arb.profit_x, arb.currency_x,
+                arb.profit_y, arb.currency_y,
+                arb.profit_z, arb.currency_z
+            )
+            # dump expected and actual orderbooks to compare
+            logger.warning('Actual orderbooks: {}', orderbooks)
+            logger.warning('Expected orderbooks: {}', arb.orderbooks)
+
         pairs = '{} {} {}'.format(arb.actions[0].pair, arb.actions[1].pair, arb.actions[2].pair)
         actions = '{} {} {}'.format(arb.actions[0].action, arb.actions[1].action, arb.actions[2].action)
         if 'actual' in self.opportunities[pairs][actions] and self.opportunities[pairs][actions]['actual']:
