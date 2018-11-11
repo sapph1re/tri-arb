@@ -547,6 +547,7 @@ class ArbitrageDetector(QObject):
         for actions in ['sell buy sell', 'buy sell buy']:
             if self.existing_arbitrages[pairs][actions]:
                 self.existing_arbitrages[pairs][actions] = False
+                logger.info('Arbitrage disappeared: {} {}', pairs, actions)
                 self.arbitrage_disappeared.emit(pairs, actions)
         return None
 
