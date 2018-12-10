@@ -25,7 +25,6 @@ if __name__ == '__main__':
         else:
             is_processing = True
         actions = []
-        logger.info('Arbitrage detected: {}', arb)
         for action in arb.actions:
             actions.append(
                 BinanceSingleAction(
