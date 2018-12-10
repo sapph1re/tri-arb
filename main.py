@@ -12,9 +12,18 @@ if __name__ == '__main__':
     logger.info('Starting...')
     app = QCoreApplication(sys.argv)
     api = BinanceApi(API_KEY, API_SECRET)
+    is_processing = False
 
+    def on_arbitrage_processed():
+        global is_processing
+        is_processing = False
 
     def process_arbitrage(arb):
+        global is_processing
+        if is_processing:
+            return
+        else:
+            is_processing = True
         actions = []
         logger.info('Arbitrage detected: {}', arb)
         for action in arb.actions:
@@ -32,7 +41,9 @@ if __name__ == '__main__':
             api=api,
             actions_list=actions
         )
-        logger.info('Arbitrage processed')
+        executor.execution_finished.connect(on_arbitrage_processed)
+        executor.start()
+        logger.info('Arbitrage executor called')
 
     symbols_info = api.get_symbols_info()
     logger.debug('All Symbols Info: {}', symbols_info)

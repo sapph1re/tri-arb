@@ -49,6 +49,7 @@ class BinanceSingleAction:
 class BinanceActionsExecutor(QThread):
 
     action_executed = pyqtSignal()
+    execution_finished = pyqtSignal()
 
     def __init__(self, api: BinanceApi, actions_list: List[BinanceSingleAction],
                  account_info: BinanceAccountInfo = None, parent=None):
@@ -124,6 +125,7 @@ class BinanceActionsExecutor(QThread):
                 logger.error('BAE {} > Continue arbitrage as market orders FAILED: {}', str(self), str(reply_json))
                 break
 
+        self.execution_finished.emit()
         logger.info('Executor finished')
 
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
