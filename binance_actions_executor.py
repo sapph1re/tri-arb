@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 from collections import deque
 from PyQt5.QtCore import QThread, pyqtSignal
 from binance_api import BinanceApi
@@ -15,7 +15,7 @@ class BinanceActionException(Exception):
 
 class BinanceSingleAction:
 
-    def __init__(self, base: str, quote: str, symbol: str, side: str, quantity, price,
+    def __init__(self, pair: Tuple[str, str], side: str, quantity, price,
                  order_type='LIMIT', timeInForce: str = 'FOK', newClientOrderId: str = None):
         """
         :param base: EOS/USDT -> BTC
@@ -35,9 +35,9 @@ class BinanceSingleAction:
         :param newClientOrderId: Идентификатор ордера, который вы сами придумаете (строка).
                     Если не указан, генерится автоматически.
         """
-        self.base = base
-        self.quote = quote
-        self.symbol = symbol.upper()
+        self.base = pair[0]
+        self.quote = pair[1]
+        self.symbol = (pair[0]+pair[1]).upper()
         self.side = side.upper()
         self.quantity = quantity
         self.price = price
@@ -50,11 +50,11 @@ class BinanceActionsExecutor(QThread):
 
     action_executed = pyqtSignal()
 
-    def __init__(self, api_key, api_secret, actions_list: List[BinanceSingleAction],
+    def __init__(self, api: BinanceApi, actions_list: List[BinanceSingleAction],
                  account_info: BinanceAccountInfo = None, parent=None):
         super(BinanceActionsExecutor, self).__init__(parent=parent)
 
-        self.__api = BinanceApi(api_key, api_secret)
+        self.__api = api
         self.__actions_list = actions_list
 
         self.__account_info = account_info if account_info is not None else BinanceAccountInfo(self.__api)
@@ -77,18 +77,24 @@ class BinanceActionsExecutor(QThread):
         self.__set_pretty_str(actions_list)
 
     def run(self):
+        logger.info('Executor starting...')
         revert_flag = False
         actions_list = self.__get_executable_actions_list()
+        logger.info('Executable actions list: {}', actions_list)
 
         actions_length = len(actions_list)
         for i in range(actions_length):
             action = actions_list[i]
+            logger.info('Executing action: {}...', action)
             reply_json = self.__try_create_order_three_times(action)
 
             if self.__is_order_filled(reply_json):
+                logger.info('Action completed')
                 continue
 
+            logger.info('Order is not filled')
             if i <= (actions_length // 2):
+                logger.info('Reverting...')
                 revert_flag = True
             break
         else:
@@ -108,13 +114,17 @@ class BinanceActionsExecutor(QThread):
             action.type = 'MARKET'
             if revert_side:
                 action.side = 'BUY' if action.side == 'SELL' else 'SELL'
+            logger.info('Executing emergency action: {}...', action)
             reply_json = self.__try_create_order_three_times(action)
             if self.__is_order_filled(reply_json):
+                logger.info('Action completed')
                 continue
             else:
                 # TODO: Подумать: а какие варианты можно ещё придумать, если маркет ордер фейлится...
                 logger.error('BAE {} > Continue arbitrage as market orders FAILED: {}', str(self), str(reply_json))
                 break
+
+        logger.info('Executor finished')
 
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
         shift = 0
