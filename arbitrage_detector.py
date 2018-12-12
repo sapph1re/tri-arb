@@ -519,7 +519,7 @@ class ArbitrageDetector(QObject):
                 )
 
         # no arbitrage found
-        logger.debug('No arbitrage found')
+        # logger.debug('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
             if self.existing_arbitrages[pairs][actions]:
                 self.existing_arbitrages[pairs][actions] = False

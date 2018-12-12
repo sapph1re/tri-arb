@@ -145,7 +145,8 @@ class BinanceActionsExecutor(QThread):
                 shift -= 1
             else:
                 dq = deque(actions_list)
-                return dq.rotate(shift)
+                dq.rotate(shift)
+                return list(dq)
         return []
 
     def __try_create_order_three_times(self, action: BinanceSingleAction):

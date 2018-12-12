@@ -131,7 +131,7 @@ class BinanceOrderBook(QObject):
             snapshot = json.loads(response)
 
             if self.__parse_snapshot(snapshot):
-                logger.debug('OB {} > Initialized', self.__symbol)
+                # logger.debug('OB {} > Initialized', self.__symbol)
                 self.__valid = True
                 self.ob_updated.emit(self.__symbol)
                 self.__start_time = time.time()
@@ -159,22 +159,23 @@ class BinanceOrderBook(QObject):
 
         # logger.debug('OB {} > Update: Time diff = {}'.format(self.__symbol, time.time() - self.__start_time))
         if time.time() - self.__start_time > self.__timeout:
-            logger.debug('OB {} > Update: Time to REINIT snapshot! ### {}', self.__symbol, self.__lastUpdateId)
+            # logger.debug('OB {} > Update: Time to REINIT snapshot! ### {}', self.__symbol, self.__lastUpdateId)
             self.init_order_book()
         elif from_id <= self.__lastUpdateId + 1 <= to_id:
-            logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
+            # logger.debug('OB {} > Update: OK ### {} ### {} > {}', self.__symbol, self.__lastUpdateId, from_id, to_id)
             self.__lastUpdateId = to_id
             self.__update_bids(update['b'])
             self.__update_asks(update['a'])
             self.__valid = True
             self.ob_updated.emit(self.__symbol)
         elif self.__lastUpdateId < from_id:
-            logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
-                         self.__symbol, self.__lastUpdateId, from_id, to_id)
+            # logger.debug('OB {} > Update: Snapshot is too OLD ### {} ### {} > {}',
+            #              self.__symbol, self.__lastUpdateId, from_id, to_id)
             self.init_order_book()
         else:
-            logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
-                         self.__symbol, self.__lastUpdateId, from_id, to_id)
+            # logger.debug('OB {} > Update: Snapshot is too NEW ### {} ### {} > {}',
+            #              self.__symbol, self.__lastUpdateId, from_id, to_id)
+            pass
 
     def __parse_snapshot(self, snapshot):
         try:
