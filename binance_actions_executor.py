@@ -45,6 +45,15 @@ class BinanceSingleAction:
         self.timeInForce = timeInForce.upper()
         self.newClientOrderId = newClientOrderId
 
+    def __str__(self):
+        return '{} {} {} {}/{} @ {} ({})'.format(
+            self.type, self.side, self.quantity,
+            self.base, self.quote, self.price, self.timeInForce
+        )
+
+    def __repr__(self):
+        return self.__str__()
+
 
 class BinanceActionsExecutor(QThread):
 
@@ -131,6 +140,7 @@ class BinanceActionsExecutor(QThread):
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
         shift = 0
         actions_list = self.__actions_list
+        logger.debug('Initial actions list: {}', actions_list)
         for action in actions_list:
             side = action.side
             base = action.base
@@ -141,10 +151,12 @@ class BinanceActionsExecutor(QThread):
             asset = quote if side == 'BUY' else base
             amount = quantity * price
             balance = self.__account_info.get_balance(asset)
+            logger.debug('{} balance: {}', asset, balance)
             if balance < amount:
                 shift -= 1
             else:
                 dq = deque(actions_list)
+                logger.debug('Rotating actions list by: {}', shift)
                 dq.rotate(shift)
                 return list(dq)
         return []

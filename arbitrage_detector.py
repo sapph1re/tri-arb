@@ -360,7 +360,7 @@ class ArbitrageDetector(QObject):
         # getting orderbooks
         for symbol in [yz, xz, xy]:
             if not self.orderbooks[symbol].is_valid():
-                    logger.debug('Orderbooks are not valid right now')
+                    # logger.debug('Orderbooks are not valid right now')
                     return None
         bids = {
             'yz': self.orderbooks[yz].get_bids(),
@@ -378,7 +378,7 @@ class ArbitrageDetector(QObject):
         for side in [bids, asks]:
             for pair in side:
                 if not side[pair]:
-                    logger.debug('Orderbooks are empty (not ready yet?)')
+                    # logger.debug('Orderbooks are empty (not ready yet?)')
                     return None
         # checking triangle in one direction: sell Y/Z, buy X/Z, sell X/Y
         amount_x_buy_total = Decimal(0)
@@ -548,7 +548,7 @@ if __name__ == '__main__':
     #     i += 1
     #     if i >= 20:
     #         break
-    logger.debug('All Symbols Info: {}', symbols_info)
+    # logger.debug('All Symbols Info: {}', symbols_info)
     detector = ArbitrageDetector(
         api=api,
         symbols_info=symbols_info,
