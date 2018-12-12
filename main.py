@@ -45,7 +45,9 @@ class TriangularArbitrage(QObject):
                 )
             )
         self.__executor = BinanceActionsExecutor(
-            api=self.__api,
+            # api=self.__api,
+            api_key=API_KEY,
+            api_secret=API_SECRET,
             actions_list=actions
         )
         self.__executor.execution_finished.connect(self.__on_arbitrage_processed)

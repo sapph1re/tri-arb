@@ -60,11 +60,11 @@ class BinanceActionsExecutor(QThread):
     action_executed = pyqtSignal()
     execution_finished = pyqtSignal()
 
-    def __init__(self, api: BinanceApi, actions_list: List[BinanceSingleAction],
+    def __init__(self, api_key: str, api_secret: str, actions_list: List[BinanceSingleAction],
                  account_info: BinanceAccountInfo = None, parent=None):
         super(BinanceActionsExecutor, self).__init__(parent=parent)
 
-        self.__api = api
+        self.__api = BinanceApi(api_key, api_secret)
         self.__actions_list = actions_list
 
         self.__account_info = account_info if account_info is not None else BinanceAccountInfo(self.__api)
