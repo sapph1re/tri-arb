@@ -99,7 +99,7 @@ class BinanceDepthWebsocket(QObject):
             self.connect()
 
     def start_ping(self):
-        logger.debug('WS > PING')
+        # logger.debug('WS > PING')
         self.__ws_client.ping()
         self.__ping_timer.singleShot(self.__ping_timeout, self.start_ping)
 
@@ -123,7 +123,7 @@ class BinanceDepthWebsocket(QObject):
             5 - QAbstractSocket::ListeningState     - For internal use only.
         :return:
         """
-        logger.debug('WS > State changed to "{}"', self.__ws_states[state])
+        # logger.debug('WS > State changed to "{}"', self.__ws_states[state])
         if state == QAbstractSocket.UnconnectedState:  # Unconnected state == 0
             self.stop_ping()
             self.connect()
@@ -154,7 +154,8 @@ class BinanceDepthWebsocket(QObject):
     @pyqtSlot('quint64', 'QByteArray')
     @pyqt_try_except(logger, 'WS', '__on_pong')
     def __on_pong(self, elapsed_time, payload):
-        logger.debug("WS > PONG: {} ms ### {}", elapsed_time, str(payload))
+        # logger.debug("WS > PONG: {} ms ### {}", elapsed_time, str(payload))
+        pass
 
     @pyqtSlot('QAbstractSocket::SocketError')
     @pyqt_try_except(logger, 'WS', '__on_error')
