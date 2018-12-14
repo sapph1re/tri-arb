@@ -84,7 +84,7 @@ class BinanceAccountInfo(QObject):
                 asset = each['asset']
                 balance = Decimal(each['free'])
                 self.__balances[asset] = balance
-            logger.debug('BAI > Update OK: {}', str(json_data))
+            # logger.debug('BAI > Update OK: {}', str(json_data))
         except KeyError:
             logger.error('BAI > __parse_info_json() KeyError: Wrong data format!')
         except (ValueError, TypeError):

@@ -89,12 +89,14 @@ class BinanceActionsExecutor(QThread):
 
     def run(self):
         logger.info('Executor starting...')
-        revert_flag = False
         actions_list = self.__get_executable_actions_list()
         logger.info('Executable actions list: {}', actions_list)
 
         # actions list is required to be exactly 3 actions for now
         actions_length = len(actions_list)
+        if actions_length == 0:
+            logger.info('Cannot execute those actions')
+            return
         if actions_length != 3:
             logger.error('Bad actions list: {}', actions_list)
             return
@@ -158,7 +160,6 @@ class BinanceActionsExecutor(QThread):
         logger.info('Executor finished')
 
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
-        shift = 0
         actions = self.__actions_list
         logger.debug('Initial actions list: {}', actions)
         # actions list is expected to be exactly three items long, in a triangle
@@ -186,6 +187,7 @@ class BinanceActionsExecutor(QThread):
             return []
         logger.debug('Sequenced actions list: {}', actions)
         # then figure out which action to start with and rotate the sequence
+        shift = 0
         for action in actions:
             side = action.side
             base = action.base
@@ -193,8 +195,12 @@ class BinanceActionsExecutor(QThread):
             quantity = action.quantity
             price = action.price
 
-            asset = quote if side == 'BUY' else base
-            amount = quantity * price
+            if side == 'BUY':
+                asset = quote
+                amount = quantity * price
+            else:
+                asset = base
+                amount = quantity
             balance = self.__account_info.get_balance(asset)
             logger.debug('{} balance: {}', asset, balance)
             if balance < amount:
@@ -233,12 +239,12 @@ class BinanceActionsExecutor(QThread):
     def __check_new_order_status(self, symbol: str, order_id) -> str or None:
         reply_json = self.__api.orderInfo(symbol, order_id)
         if reply_json and ('status' in reply_json):
-                status = reply_json['status']
-                if status != 'NEW':
-                    return status
-                else:
-                    self.msleep(100)
-                    self.__check_new_order_status(symbol, order_id)
+            status = reply_json['status']
+            if status != 'NEW':
+                return status
+            else:
+                self.msleep(100)
+                self.__check_new_order_status(symbol, order_id)
         else:
             logger.error('BAE {} > Check order status FAILED: {}', str(self), str(reply_json))
             return None
