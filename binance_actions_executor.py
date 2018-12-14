@@ -35,6 +35,7 @@ class BinanceSingleAction:
         :param newClientOrderId: Идентификатор ордера, который вы сами придумаете (строка).
                     Если не указан, генерится автоматически.
         """
+        self.pair = pair
         self.base = pair[0]
         self.quote = pair[1]
         self.symbol = (pair[0]+pair[1]).upper()
@@ -92,7 +93,11 @@ class BinanceActionsExecutor(QThread):
         actions_list = self.__get_executable_actions_list()
         logger.info('Executable actions list: {}', actions_list)
 
+        # actions list is required to be exactly 3 actions for now
         actions_length = len(actions_list)
+        if actions_length != 3:
+            logger.error('Bad actions list: {}', actions_list)
+            return
         for i in range(actions_length):
             action = actions_list[i]
             logger.info('Executing action: {}...', action)
@@ -102,28 +107,43 @@ class BinanceActionsExecutor(QThread):
                 logger.info('Action completed')
                 continue
 
+            # if order is not filled, execute emergency actions
             logger.info('Order is not filled')
-            if i <= (actions_length // 2):
-                logger.info('Reverting...')
-                revert_flag = True
             break
         else:
             return
 
-        start_index = i
-        end_index = actions_length
-        step = 1
-        revert_side = False
-        if revert_flag:  # if not revert it continue to execute triangle as market orders
-            end_index = -1
-            step = -1
-            revert_side = True
-
-        for i in range(start_index, end_index, step):
+        # emergency actions in case of any failures
+        emergency_actions = []
+        if i == 0:
+            # first action failed: nothing to revert
+            logger.info('Failed to execute the actions list')
+        elif i == 1:
+            # second action failed: revert first action
             action = actions_list[i]
-            action.type = 'MARKET'
-            if revert_side:
-                action.side = 'BUY' if action.side == 'SELL' else 'SELL'
+            logger.info('Reverting first action: {}', action)
+            emergency_actions.append(
+                BinanceSingleAction(
+                    pair=action.pair,
+                    side='BUY' if action.side == 'SELL' else 'SELL',
+                    quantity=action.quantity,
+                    order_type='MARKET'
+                )
+            )
+        elif i == 2:
+            # third action failed: complete third action as a market order
+            action = actions_list[i]
+            logger.info('Finalizing last action: {}, as a market order', action)
+            emergency_actions.append(
+                BinanceSingleAction(
+                    pair=action.pair,
+                    side=action.side,
+                    quantity=action.quantity,
+                    order_type='MARKET'
+                )
+            )
+
+        for action in emergency_actions:
             logger.info('Executing emergency action: {}...', action)
             reply_json = self.__try_create_order_three_times(action)
             if self.__is_order_filled(reply_json):
@@ -139,9 +159,34 @@ class BinanceActionsExecutor(QThread):
 
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
         shift = 0
-        actions_list = self.__actions_list
-        logger.debug('Initial actions list: {}', actions_list)
-        for action in actions_list:
+        actions = self.__actions_list
+        logger.debug('Initial actions list: {}', actions)
+        # actions list is expected to be exactly three items long, in a triangle
+        if len(actions) != 3:
+            logger.error('Number of actions is not 3: {}', actions)
+            return []
+        # first rearrange actions in a sequence to pass funds along the sequence
+        gain = []
+        spend = []
+        for action in actions:
+            if action.side == 'BUY':
+                gain.append(action.base)
+                spend.append(action.quote)
+            else:
+                gain.append(action.quote)
+                spend.append(action.base)
+        if gain[0] == spend[1] and gain[1] == spend[2] and gain[2] == spend[0]:
+            # sequence is already fine
+            pass
+        elif gain[0] == spend[2] and gain[2] == spend[1] and gain[1] == spend[0]:
+            # sequence needs to be rearranged
+            actions = [actions[0], actions[2], actions[1]]
+        else:
+            logger.error('Bad actions list: not a valid triangle! Actions: {}', actions)
+            return []
+        logger.debug('Sequenced actions list: {}', actions)
+        # then figure out which action to start with and rotate the sequence
+        for action in actions:
             side = action.side
             base = action.base
             quote = action.quote
@@ -155,7 +200,7 @@ class BinanceActionsExecutor(QThread):
             if balance < amount:
                 shift -= 1
             else:
-                dq = deque(actions_list)
+                dq = deque(actions)
                 logger.debug('Rotating actions list by: {}', shift)
                 dq.rotate(shift)
                 return list(dq)
