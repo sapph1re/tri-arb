@@ -466,7 +466,7 @@ class BinanceApi(QObject):
                   'side': side.upper(),
                   'type': order_type.upper(),
                   'quantity': quantity}
-        if timeInForce:
+        if timeInForce and order_type.upper() != 'MARKET':
             kwargs['timeInForce'] = timeInForce
         if price:
             kwargs['price'] = price
