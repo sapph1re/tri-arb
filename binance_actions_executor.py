@@ -96,9 +96,11 @@ class BinanceActionsExecutor(QThread):
         actions_length = len(actions_list)
         if actions_length == 0:
             logger.info('Cannot execute those actions')
+            self.execution_finished.emit()
             return
         if actions_length != 3:
             logger.error('Bad actions list: {}', actions_list)
+            self.execution_finished.emit()
             return
         for i in range(actions_length):
             action = actions_list[i]
@@ -113,6 +115,7 @@ class BinanceActionsExecutor(QThread):
             logger.info('Order is not filled')
             break
         else:
+            self.execution_finished.emit()
             return
 
         # emergency actions in case of any failures
