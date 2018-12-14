@@ -138,7 +138,7 @@ class BinanceActionsExecutor(QThread):
             logger.info('Failed to execute the actions list')
         elif i == 1:
             # second action failed: revert first action
-            action = actions_list[i]
+            action = actions_list[0]
             logger.info('Reverting first action: {}', action)
             emergency_actions.append(
                 BinanceSingleAction(
@@ -150,7 +150,7 @@ class BinanceActionsExecutor(QThread):
             )
         elif i == 2:
             # third action failed: complete third action as a market order
-            action = actions_list[i]
+            action = actions_list[2]
             logger.info('Finalizing last action: {}, as a market order', action)
             emergency_actions.append(
                 BinanceSingleAction(
