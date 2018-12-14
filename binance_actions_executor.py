@@ -97,7 +97,7 @@ class BinanceActionsExecutor(QThread):
     def run(self):
         logger.info('Executor starting...')
         # init api and account info
-        self.__api = BinanceApi(self.api_key, self.api_secret)
+        self.__api = BinanceApi(self.__api_key, self.__api_secret)
         if self.__account_info is None:
             self.__account_info = BinanceAccountInfo(self.__api)
         self.action_executed.connect(self.__account_info.update_info_async)
