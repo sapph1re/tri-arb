@@ -1,6 +1,8 @@
+import time
 from typing import List, Tuple
 from collections import deque
 from PyQt5.QtCore import QThread, pyqtSignal
+from config import WAIT_ORDER_TO_FILL
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
 from custom_logging import get_logger
@@ -120,13 +122,18 @@ class BinanceActionsExecutor(QThread):
             logger.info('Executing action: {}...', action)
             reply_json = self.__try_create_order_three_times(action)
 
-            if self.__is_order_filled(reply_json):
-                logger.info('Action completed')
-                continue
-
-            # if order is not filled, execute emergency actions
-            logger.info('Order is not filled')
-            break
+            unfilled = False
+            t = time.time()
+            while not self.__is_order_filled(reply_json):
+                if time.time() - t > WAIT_ORDER_TO_FILL:
+                    unfilled = True
+                    break
+            if unfilled:
+                # if order is not filled, execute emergency actions
+                logger.info('Order is not filled')
+                break
+            logger.info('Action completed')
+            continue
         else:
             self.execution_finished.emit()
             return
