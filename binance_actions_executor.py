@@ -77,7 +77,6 @@ class BinanceActionsExecutor(QThread):
         self.__actions_list = actions_list
 
         self.__account_info = account_info
-        self.action_executed.connect(self.__account_info.update_info_async)
 
         self.__pretty_str = ''
         self.__set_pretty_str(actions_list)
@@ -101,6 +100,7 @@ class BinanceActionsExecutor(QThread):
         self.__api = BinanceApi(self.api_key, self.api_secret)
         if self.__account_info is None:
             self.__account_info = BinanceAccountInfo(self.__api)
+        self.action_executed.connect(self.__account_info.update_info_async)
 
         actions_list = self.__get_executable_actions_list()
         logger.info('Executable actions list: {}', actions_list)
