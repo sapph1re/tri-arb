@@ -71,10 +71,12 @@ class BinanceActionsExecutor(QThread):
                  account_info: BinanceAccountInfo = None, parent=None):
         super(BinanceActionsExecutor, self).__init__(parent=parent)
 
-        self.__api = BinanceApi(api_key, api_secret)
+        self.__api_key = api_key
+        self.__api_secret = api_secret
+        self.__api = None  # will be set properly in run() to avoid threading problems
         self.__actions_list = actions_list
 
-        self.__account_info = account_info if account_info is not None else BinanceAccountInfo(self.__api)
+        self.__account_info = account_info
         self.action_executed.connect(self.__account_info.update_info_async)
 
         self.__pretty_str = ''
@@ -95,6 +97,11 @@ class BinanceActionsExecutor(QThread):
 
     def run(self):
         logger.info('Executor starting...')
+        # init api and account info
+        self.__api = BinanceApi(self.api_key, self.api_secret)
+        if self.__account_info is None:
+            self.__account_info = BinanceAccountInfo(self.__api)
+
         actions_list = self.__get_executable_actions_list()
         logger.info('Executable actions list: {}', actions_list)
 
@@ -239,7 +246,12 @@ class BinanceActionsExecutor(QThread):
             if status == 'NEW':
                 cur_symbol = reply_json['symbol']
                 cur_order_id = reply_json['orderId']
-                status = self.__check_new_order_status(cur_symbol, cur_order_id)
+                status = None
+                # try checking result three times
+                repeat_counter = 0
+                while not status:
+                    status = self.__check_new_order_status(cur_symbol, cur_order_id)
+                    repeat_counter += 1
             if status == 'FILLED':
                 self.action_executed.emit()
                 return True
