@@ -15,7 +15,7 @@ class BinanceActionException(Exception):
 
 class BinanceSingleAction:
 
-    def __init__(self, pair: Tuple[str, str], side: str, quantity, price,
+    def __init__(self, pair: Tuple[str, str], side: str, quantity, price=None,
                  order_type='LIMIT', timeInForce: str = 'FOK', newClientOrderId: str = None):
         """
         :param base: EOS/USDT -> BTC
@@ -23,7 +23,7 @@ class BinanceSingleAction:
         :param symbol: пара (т.е. 'BTCUSDT', 'ETHBTC', 'EOSETH')
         :param side: тип ордера (BUY либо SELL)
         :param quantity: количество к покупке
-        :param price: цена
+        :param price: цена (не обязательно для MARKET ордера)
         :param order_type: тип ордера (LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT,
                     TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER)
         :param timeInForce: (GTC, IOC, FOK). По умолчанию GTC. Расшифрую.
@@ -47,10 +47,16 @@ class BinanceSingleAction:
         self.newClientOrderId = newClientOrderId
 
     def __str__(self):
-        return '{} {} {} {}/{} @ {} ({})'.format(
-            self.type, self.side, self.quantity,
-            self.base, self.quote, self.price, self.timeInForce
-        )
+        if self.type == 'MARKET':
+            return '{} {} {} {}/{}'.format(
+                self.type, self.side, self.quantity,
+                self.base, self.quote
+            )
+        else:
+            return '{} {} {} {}/{} @ {} ({})'.format(
+                self.type, self.side, self.quantity,
+                self.base, self.quote, self.price, self.timeInForce
+            )
 
     def __repr__(self):
         return self.__str__()
