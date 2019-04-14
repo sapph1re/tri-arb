@@ -769,7 +769,7 @@ class BinanceApi(QObject):
             self.start_call_api_async.emit(method, slot, q_request, q_data)
             return None
         else:
-            return self.__call_api_sync(method, q_request, q_data)
+            return self.__call_api_sync(method=method, q_request=q_request, q_data=q_data)
 
     def __call_api_sync(self, **kwargs) -> dict or None:
         """
