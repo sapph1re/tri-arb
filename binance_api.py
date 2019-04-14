@@ -172,7 +172,7 @@ class BinanceApi(QObject):
 
     start_call_api_async = pyqtSignal(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
 
-    def __init__(self, api_key, api_secret, reply_timeout: int = 5000, parent=None):
+    def __init__(self, api_key, api_secret, reply_timeout: int = 5000, default_tries: int = 3, parent=None):
         super(BinanceApi, self).__init__(parent)
 
         self.start_call_api_async.connect(self.__call_api_async)
@@ -182,6 +182,7 @@ class BinanceApi(QObject):
         self.__q_nam = QNetworkAccessManager()
 
         self.__reply_timeout = reply_timeout
+        self.__default_tries = default_tries
 
         self.__time_delta = 0
         time_response = self.time()
@@ -770,7 +771,25 @@ class BinanceApi(QObject):
         else:
             return self.__call_api_sync(method, q_request, q_data)
 
-    def __call_api_sync(self, method: str, q_request: QNetworkRequest, q_data: QByteArray) -> dict:
+    def __call_api_sync(self, **kwargs) -> dict or None:
+        """
+        Will retry calling in case of failure. Number of tries is configurable
+        both via the argument and via default number that is set in constructor.
+        """
+        result = None
+        tries = int(kwargs.pop('tries', self.__default_tries))
+        while tries > 0:
+            result = self.__call_api_sync_once(**kwargs)
+            if 'error' not in result:
+                break
+            tries -= 1
+            logger.warning(
+                'API call failed: {}. Error: {}. Tries left: {}',
+                kwargs, result['error'], tries
+            )
+        return result
+
+    def __call_api_sync_once(self, method: str, q_request: QNetworkRequest, q_data: QByteArray) -> dict:
         reply = None
         if method == 'POST':
             reply = self.__q_nam.post(q_request, q_data)
