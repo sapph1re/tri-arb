@@ -1,4 +1,5 @@
 import time
+from decimal import Decimal
 from typing import List, Tuple
 from collections import deque
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -117,29 +118,57 @@ class BinanceActionsExecutor(QThread):
             logger.error('Bad actions list: {}', actions_list)
             self.execution_finished.emit()
             return
+
+        # emergency actions in case of any failures
+        emergency_actions = []
+
         for i in range(actions_length):
             action = actions_list[i]
             logger.info('Executing action: {}...', action)
-            reply_json = self.__try_create_order_three_times(action)
+            reply_json = self.__try_execute_action(action)
 
-            unfilled = False
-            t = time.time()
-            while not self.__is_order_filled(reply_json):
-                if time.time() - t > WAIT_ORDER_TO_FILL:
-                    unfilled = True
-                    break
-            if unfilled:
-                # if order is not filled, execute emergency actions
-                logger.info('Order is not filled')
+            if not reply_json or 'error' in reply_json:
+                # order creation failed, execute emergency actions
+                logger.error('Action failed! Failed to place an order.')
                 break
-            logger.info('Action completed')
-            continue
+            else:
+                # order created, now wait for it to get filled
+                t = time.time()
+                symbol = reply_json['symbol']
+                order_id = reply_json['orderId']
+                status = reply_json['status']
+                while status != 'FILLED' and time.time() - t < WAIT_ORDER_TO_FILL:
+                    status = self.__get_order_status(reply_json)
+                # possible statuses: NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
+                if status in ['NEW', 'PARTIALLY_FILLED']:
+                    # order is not filled, cancel it and execute emergency actions
+                    logger.info('Action failed! Order is not filled. Cancelling...')
+                    reply_json = self.__api.cancelOrder(symbol, order_id)
+                    amount_filled = Decimal(reply_json['executedQty'])
+                    if amount_filled > 0:
+                        logger.info('Order has been partially filled: {} {}', amount_filled, action.base)
+                        # emergency: revert partially executed amount
+                        emergency_actions.append(
+                            BinanceSingleAction(
+                                pair=action.pair,
+                                side='BUY' if action.side == 'SELL' else 'SELL',
+                                quantity=amount_filled,
+                                order_type='MARKET'
+                            )
+                        )
+                    break
+                if status in ['CANCELED', 'REJECTED', 'EXPIRED']:
+                    # order failed for unclear reasons, just execute emergency actions
+                    logger.info('Action failed! Unexpected order status: {}.', status)
+                    break
+
+                logger.info('Action completed!')
+                continue
         else:
             self.execution_finished.emit()
             return
 
-        # emergency actions in case of any failures
-        emergency_actions = []
+        # performing emergency actions
         if i == 0:
             # first action failed: nothing to revert
             logger.info('Failed to execute the actions list')
@@ -170,13 +199,17 @@ class BinanceActionsExecutor(QThread):
 
         for action in emergency_actions:
             logger.info('Executing emergency action: {}...', action)
-            reply_json = self.__try_create_order_three_times(action)
-            if self.__is_order_filled(reply_json):
+            reply_json = self.__try_execute_action(action)
+            status = self.__get_order_status(reply_json)
+            if status == 'FILLED':
                 logger.info('Action completed')
                 continue
             else:
-                # TODO: Подумать: а какие варианты можно ещё придумать, если маркет ордер фейлится...
-                logger.error('BAE {} > Continue arbitrage as market orders FAILED: {}', str(self), str(reply_json))
+                logger.error(
+                    'Emergency market order FAILED: {}. Status: {}',
+                    action,
+                    str(status)
+                )
                 break
 
         self.execution_finished.emit()
@@ -229,53 +262,36 @@ class BinanceActionsExecutor(QThread):
             if balance < amount:
                 shift -= 1
             else:
-                dq = deque(actions)
-                logger.debug('Rotating actions list by: {}', shift)
-                dq.rotate(shift)
-                return list(dq)
+                if shift != 0:
+                    dq = deque(actions)
+                    logger.debug('Rotating actions list by: {}', shift)
+                    dq.rotate(shift)
+                    actions = list(dq)
+                return actions
         return []
 
-    def __try_create_order_three_times(self, action: BinanceSingleAction):
-        reply_json = None
-        repeat_counter = 0
-        while ((not reply_json) or ('status' not in reply_json)) and (repeat_counter < 3):
-            reply_json = self.__api.createOrder(action.symbol, action.side, action.type, action.quantity,
-                                                action.timeInForce, action.price, action.newClientOrderId)
-            repeat_counter += 1
-        if reply_json:
-            return reply_json
-        else:
-            return None
+    def __try_execute_action(self, action: BinanceSingleAction):
+        return self.__api.createOrder(
+            action.symbol,
+            action.side,
+            action.type,
+            action.quantity,
+            action.timeInForce,
+            action.price,
+            action.newClientOrderId
+        )
 
-    def __is_order_filled(self, reply_json) -> bool:
-        if reply_json and ('status' in reply_json):
-            status = reply_json['status']
-            if status == 'NEW':
-                cur_symbol = reply_json['symbol']
-                cur_order_id = reply_json['orderId']
-                status = None
-                # try checking result three times
-                repeat_counter = 0
-                while not status:
-                    status = self.__check_new_order_status(cur_symbol, cur_order_id)
-                    repeat_counter += 1
-            if status == 'FILLED':
-                self.action_executed.emit()
-                return True
-        return False
-
-    def __check_new_order_status(self, symbol: str, order_id) -> str or None:
-        reply_json = self.__api.orderInfo(symbol, order_id)
-        if reply_json and ('status' in reply_json):
-            status = reply_json['status']
-            if status != 'NEW':
-                return status
-            else:
-                self.msleep(100)
-                self.__check_new_order_status(symbol, order_id)
-        else:
-            logger.error('BAE {} > Check order status FAILED: {}', str(self), str(reply_json))
-            return None
+    def __get_order_status(self, reply_json) -> str or None:
+        status = reply_json['status']
+        if status == 'NEW':
+            symbol = reply_json['symbol']
+            order_id = reply_json['orderId']
+            # Order statuses in Binance:
+            #   NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
+            reply_json = self.__api.orderInfo(symbol, order_id)
+            if reply_json and 'status' in reply_json:
+                status = reply_json['status']
+        return status
 
 
 def main():
