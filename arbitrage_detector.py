@@ -92,8 +92,8 @@ class ArbitrageDetector(QObject):
         self.websockets = []
         i = 999
         for symbol, details in self.symbols.items():
-            # starting a thread and a websocket per every 50 symbols
-            if i >= 50:
+            # starting a thread and a websocket per every 80 symbols
+            if i >= 80:
                 th = QThread()
                 self.threads.append(th)
                 ws = BinanceDepthWebsocket(thread=th)

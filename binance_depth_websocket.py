@@ -123,7 +123,7 @@ class BinanceDepthWebsocket(QObject):
             5 - QAbstractSocket::ListeningState     - For internal use only.
         :return:
         """
-        # logger.debug('WS > State changed to "{}"', self.__ws_states[state])
+        logger.debug('WS > State changed to "{}"', self.__ws_states[state])
         if state == QAbstractSocket.UnconnectedState:  # Unconnected state == 0
             self.stop_ping()
             self.connect()
