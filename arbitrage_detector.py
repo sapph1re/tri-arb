@@ -1,7 +1,7 @@
 import sys
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
 from triangles_finder import TrianglesFinder
@@ -335,6 +335,16 @@ class ArbitrageDetector(QObject):
             return None
         return amounts_new
 
+    def limit_amounts(self, amounts: Dict[str, Decimal], reduce_factor: Decimal):
+        """
+        Reduces amounts to stay away from the edge
+        :param amounts: dict of amounts
+        :param reduce_factor: the multiplier
+        :return: new amounts
+        """
+        new_amounts = {k: v*reduce_factor for k, v in amounts.items()}
+        return new_amounts
+
     def find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
         """
         Looks for arbitrage in the triangle: Y/Z, X/Z, X/Y.
@@ -417,19 +427,24 @@ class ArbitrageDetector(QObject):
         if prices is not None:  # potential arbitrage exists
             orderbooks = (bids_saved['yz'], asks_saved['xz'], bids_saved['xy'])
             # make amounts comply with order size requirements
+            amounts = {
+                'y': amount_y_total,
+                'x_buy': amount_x_buy_total,
+                'x_sell': amount_x_sell_total,
+                'z_spend': amount_z_spend_total,
+                'z_profit': profit_z_total
+            }
+            logger.debug('Amounts before recalculation: {}', amounts)
+            amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
+            logger.debug('Amounts limited: {}', amounts)
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='sell buy sell',
-                amounts={
-                    'y': amount_y_total,
-                    'x_buy': amount_x_buy_total,
-                    'x_sell': amount_x_sell_total,
-                    'z_spend': amount_z_spend_total,
-                    'z_profit': profit_z_total
-                },
+                amounts=amounts,
                 prices=(prices['yz'], prices['xz'], prices['xy']),
                 orderbooks=orderbooks
             )
+            logger.debug('Amounts normalized and recalculated: {}', normalized)
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 self.existing_arbitrages[pairs]['sell buy sell'] = True
                 return Arbitrage(
@@ -486,19 +501,24 @@ class ArbitrageDetector(QObject):
         if prices is not None:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
+            amounts = {
+                'y': amount_y_total,
+                'x_buy': amount_x_buy_total,
+                'x_sell': amount_x_sell_total,
+                'z_spend': amount_z_spend_total,
+                'z_profit': profit_z_total
+            }
+            logger.debug('Amounts before recalculation: {}', amounts)
+            amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
+            logger.debug('Amounts limited: {}', amounts)
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='buy sell buy',
-                amounts={
-                    'y': amount_y_total,
-                    'x_buy': amount_x_buy_total,
-                    'x_sell': amount_x_sell_total,
-                    'z_spend': amount_z_spend_total,
-                    'z_profit': profit_z_total
-                },
+                amounts=amounts,
                 prices=(prices['yz'], prices['xz'], prices['xy']),
                 orderbooks=orderbooks
             )
+            logger.debug('Amounts normalized and recalculated: {}', normalized)
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 self.existing_arbitrages[pairs]['buy sell buy'] = True
                 return Arbitrage(
