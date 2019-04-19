@@ -73,8 +73,8 @@ class ArbitrageDetector(QObject):
         self.symbols_info = symbols_info
         self.triangles = TrianglesFinder().make_triangles(symbols_info)
         self.triangles, self.symbols = self._verify_triangles(self.triangles)
-        logger.debug('Triangles: {}', self.triangles)
-        logger.debug('Symbols: {}', self.symbols)
+        # logger.debug('Triangles: {}', self.triangles)
+        # logger.debug('Symbols: {}', self.symbols)
 
         # load order amount requirements
         self.symbols_filters = {}
@@ -92,8 +92,8 @@ class ArbitrageDetector(QObject):
         self.websockets = []
         i = 999
         for symbol, details in self.symbols.items():
-            # starting a thread and a websocket per every 80 symbols
-            if i >= 80:
+            # starting a thread and a websocket per every 50 symbols
+            if i >= 50:
                 th = QThread()
                 self.threads.append(th)
                 ws = BinanceDepthWebsocket(thread=th)
@@ -263,7 +263,7 @@ class ArbitrageDetector(QObject):
         :param direction: 'sell buy sell' or 'buy sell buy'
         :param amounts: {y, x_buy, x_sell, z_spend, z_profit} amounts of the arbitrage
         :param prices: {yz, xz, xy} prices for the three symbols
-        :return: {y, x_buy, x_sell, z_spend, x_profit, y_profit, z_profit, z_profit_rel}
+        :return: {y, x_buy, x_sell, z_spend, x_profit, y_profit, z_profit, profit_rel}
             Amounts normalized and recalculated, also reports expected y_profit and x_profit.
             Returns None when misused or amounts are too little.
         """
@@ -335,7 +335,7 @@ class ArbitrageDetector(QObject):
             return None
         return amounts_new
 
-    def limit_amounts(self, amounts: Dict[str, Decimal], reduce_factor: Decimal):
+    def limit_amounts(self, amounts: Dict[str, Decimal], reduce_factor: Decimal) -> Dict[str, Decimal]:
         """
         Reduces amounts to stay away from the edge
         :param amounts: dict of amounts
@@ -344,6 +344,71 @@ class ArbitrageDetector(QObject):
         """
         new_amounts = {k: v*reduce_factor for k, v in amounts.items()}
         return new_amounts
+
+    def reduce_arbitrage(self, arb: Arbitrage, reduce_factor: Decimal) -> Arbitrage or None:
+        """
+        Reduces amounts of a given arbitrage by a given factor
+        :param arb: initial arbitrage
+        :param reduce_factor: the multiplier
+        :return: new arbitrage (only amounts are changed) or None if there is no arbitrage
+        available with lower amounts
+        """
+        amounts = {
+            'y': arb.actions[0].amount,
+            'z_spend': arb.amount_z,
+            'z_profit': arb.profit_z
+        }
+        # we assume here that it's either "sell buy sell" or "buy sell buy"
+        # exactly in the YZ, XZ, XY sequence
+        if arb.actions[0].action == 'sell':
+            direction = 'sell buy sell'
+            amounts['x_buy'] = arb.actions[1].amount
+            amounts['x_sell'] = arb.actions[2].amount
+        else:
+            direction = 'buy sell buy'
+            amounts['x_buy'] = arb.actions[2].amount
+            amounts['x_sell'] = arb.actions[1].amount
+        yz = ''.join(arb.actions[0].pair)
+        xz = ''.join(arb.actions[1].pair)
+        xy = ''.join(arb.actions[2].pair)
+        logger.debug('Amounts before reduction: {}', amounts)
+        new_amounts = self.limit_amounts(amounts, reduce_factor)
+        logger.debug('Amounts reduced: {}', new_amounts)
+        normalized = self.normalize_amounts_and_recalculate(
+            symbols=(yz, xz, xy),
+            direction=direction,
+            amounts=new_amounts,
+            prices=(arb.actions[0].price, arb.actions[1].price, arb.actions[2].price),
+            orderbooks=arb.orderbooks
+        )
+        if normalized is None:
+            logger.debug('No reduced arbitrage available')
+            return None
+        logger.debug('Reduced amounts normalized and recalculated: {}', normalized)
+        if direction == 'sell buy sell':
+            new_actions = [
+                MarketAction(arb.actions[0].pair, 'sell', arb.actions[0].price, normalized['y']),
+                MarketAction(arb.actions[1].pair, 'buy', arb.actions[1].price, normalized['x_buy']),
+                MarketAction(arb.actions[2].pair, 'sell', arb.actions[2].price, normalized['x_sell'])
+            ]
+        else:  # buy sell buy
+            new_actions = [
+                MarketAction(arb.actions[0].pair, 'buy', arb.actions[0].price, normalized['y']),
+                MarketAction(arb.actions[1].pair, 'sell', arb.actions[1].price, normalized['x_sell']),
+                MarketAction(arb.actions[2].pair, 'buy', arb.actions[2].price, normalized['x_buy'])
+            ]
+        return Arbitrage(
+            actions=new_actions,
+            currency_z=arb.currency_z,
+            amount_z=normalized['z_spend'],
+            profit_z=normalized['z_profit'],
+            profit_z_rel=normalized['profit_rel'],
+            profit_y=normalized['y_profit'],
+            currency_y=arb.currency_y,
+            profit_x=normalized['x_profit'],
+            currency_x=arb.currency_x,
+            orderbooks=arb.orderbooks
+        )
 
     def find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
         """

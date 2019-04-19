@@ -172,7 +172,7 @@ class BinanceApi(QObject):
 
     start_call_api_async = pyqtSignal(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
 
-    def __init__(self, api_key, api_secret, reply_timeout: int = 5000, default_tries: int = 3, parent=None):
+    def __init__(self, api_key, api_secret, reply_timeout: int = 5000, default_tries: int = 10, parent=None):
         super(BinanceApi, self).__init__(parent)
 
         self.start_call_api_async.connect(self.__call_api_async)
@@ -778,15 +778,23 @@ class BinanceApi(QObject):
         """
         result = None
         tries = int(kwargs.pop('tries', self.__default_tries))
+        # if kwargs['method'] == 'GET':
+        #     logger.debug('Calling API: GET {}', kwargs['q_request'].url())
+        # else:
+        #     logger.debug(
+        #         'Calling API: {} {}\nData: {}', kwargs['method'], kwargs['q_request'].url(), kwargs['q_data']
+        #     )
         while tries > 0:
             result = self.__call_api_sync_once(**kwargs)
             if 'error' not in result:
                 break
             tries -= 1
-            logger.warning(
-                'API call failed: {}. Error: {}. Tries left: {}',
-                kwargs, result['error'], tries
-            )
+            # logger.warning(
+            #     'API call failed: {}. Error: {}. Tries left: {}. Retrying...',
+            #     kwargs['q_request'].url(), result['error'], tries
+            # )
+        if tries == 0:
+            logger.error('API call failed a few tries in a row: {} {}', kwargs['method'], kwargs['q_request'].url())
         return result
 
     def __call_api_sync_once(self, method: str, q_request: QNetworkRequest, q_data: QByteArray) -> dict:
@@ -794,7 +802,7 @@ class BinanceApi(QObject):
         if method == 'POST':
             reply = self.__q_nam.post(q_request, q_data)
         elif method == 'DELETE':
-            reply = self.__q_nam.deleteResource(q_request)
+            reply = self.__q_nam.sendCustomRequest(q_request, 'DELETE'.encode('utf-8'), q_data)
         elif method == 'GET':
             reply = self.__q_nam.get(q_request)
         else:
@@ -816,8 +824,8 @@ class BinanceApi(QObject):
                 response_json = json.loads(response)
                 return response_json
             except json.JSONDecodeError:
-                logger.error('BAPI > JSON Decode FAILED: {}', str(response))
-                return {'error': 'Response is not JSON: {}'.format(response)}
+                # logger.error('BAPI > JSON Decode FAILED: {}', str(response))
+                return {'error': 'Response is not JSON: {}'.format(str(response))}
         else:
             logger.error('BAPI> Request FAILED: No Reply')
             return {'error': 'No Reply'}

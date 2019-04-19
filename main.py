@@ -48,7 +48,9 @@ class TriangularArbitrage(QObject):
             # api=self.__api,
             api_key=API_KEY,
             api_secret=API_SECRET,
-            actions_list=actions
+            actions_list=actions,
+            detector=self.__detector,
+            arbitrage=arb
         )
         self.__executor.execution_finished.connect(self.__on_arbitrage_processed)
         self.__executor.start()

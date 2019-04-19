@@ -6,6 +6,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from config import WAIT_ORDER_TO_FILL
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
+from arbitrage_detector import ArbitrageDetector, Arbitrage
 from custom_logging import get_logger
 
 
@@ -71,6 +72,7 @@ class BinanceActionsExecutor(QThread):
     execution_finished = pyqtSignal()
 
     def __init__(self, api_key: str, api_secret: str, actions_list: List[BinanceSingleAction],
+                 detector: ArbitrageDetector, arbitrage: Arbitrage,
                  account_info: BinanceAccountInfo = None, parent=None):
         super(BinanceActionsExecutor, self).__init__(parent=parent)
 
@@ -83,6 +85,9 @@ class BinanceActionsExecutor(QThread):
 
         self.__pretty_str = ''
         self.__set_pretty_str(actions_list)
+
+        self.__detector = detector
+        self.__arbitrage = arbitrage
 
     def __str__(self):
         return self.__pretty_str
@@ -126,6 +131,7 @@ class BinanceActionsExecutor(QThread):
             action = actions_list[i]
             logger.info('Executing action: {}...', action)
             reply_json = self.__try_execute_action(action)
+            # logger.debug('Order creation response: {}', reply_json)
 
             if not reply_json or 'error' in reply_json:
                 # order creation failed, execute emergency actions
@@ -142,9 +148,16 @@ class BinanceActionsExecutor(QThread):
                 # possible statuses: NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
                 if status in ['NEW', 'PARTIALLY_FILLED']:
                     # order is not filled, cancel it and execute emergency actions
-                    logger.info('Action failed! Order is not filled. Cancelling...')
+                    logger.info('Action failed! Order is not filled. Cancelling order {} on symbol {}...', order_id, symbol)
                     reply_json = self.__api.cancelOrder(symbol, order_id)
-                    amount_filled = Decimal(reply_json['executedQty'])
+                    try:
+                        amount_filled = Decimal(reply_json['executedQty'])
+                    except KeyError:
+                        if reply_json['msg'] == 'Unknown order sent.':
+                            logger.warning('Order {} {} not found, already completed?', symbol, order_id)
+                        else:
+                            logger.error('Order cancellation failed, response: {}', reply_json)
+                        break
                     if amount_filled > 0:
                         logger.info('Order has been partially filled: {} {}', amount_filled, action.base)
                         # emergency: revert partially executed amount
@@ -243,6 +256,7 @@ class BinanceActionsExecutor(QThread):
             return []
         logger.debug('Sequenced actions list: {}', actions)
         # then figure out which action to start with and rotate the sequence
+        candidates = []
         shift = 0
         for action in actions:
             side = action.side
@@ -258,17 +272,35 @@ class BinanceActionsExecutor(QThread):
                 asset = base
                 amount = quantity
             balance = self.__account_info.get_balance(asset)
-            logger.debug('{} balance: {}', asset, balance)
-            if balance < amount:
-                shift -= 1
-            else:
-                if shift != 0:
-                    dq = deque(actions)
-                    logger.debug('Rotating actions list by: {}', shift)
-                    dq.rotate(shift)
-                    actions = list(dq)
-                return actions
-        return []
+            logger.debug('{} balance: {:.8f}', asset, balance)
+            candidates.append(balance / amount)
+        # we will start with the action that has the highest balance/amount proportion
+        proportion = max(candidates)
+        idx = candidates.index(proportion)
+        shift = -idx
+        if shift != 0:
+            dq = deque(actions)
+            # logger.debug('Rotating actions list by: {}', shift)
+            dq.rotate(shift)
+            actions = list(dq)
+        if proportion < 1:
+            # recalculate action amounts to fit in our balance and keep the arbitrage profitable
+            logger.debug('Reducing the arbitrage by: {}', proportion)
+            reduced = self.__detector.reduce_arbitrage(
+                arb=self.__arbitrage,
+                reduce_factor=proportion
+            )
+            if reduced is None:
+                logger.info('Arbitrage is not available with reduced amounts')
+                return []
+            # extract amounts from the reduced arbitrage
+            for action in actions:
+                a = next((
+                    a for a in reduced.actions if a.pair == action.pair and a.action.upper() == action.side
+                ), None)
+                action.quantity = a.amount
+            logger.debug('Reduced arbitrage actions list: {}', actions)
+        return actions
 
     def __try_execute_action(self, action: BinanceSingleAction):
         return self.__api.createOrder(
