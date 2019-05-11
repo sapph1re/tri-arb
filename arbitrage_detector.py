@@ -371,9 +371,9 @@ class ArbitrageDetector(QObject):
         yz = ''.join(arb.actions[0].pair)
         xz = ''.join(arb.actions[1].pair)
         xy = ''.join(arb.actions[2].pair)
-        logger.debug('Amounts before reduction: {}', amounts)
+        # logger.debug('Amounts before reduction: {}', amounts)
         new_amounts = self.limit_amounts(amounts, reduce_factor)
-        logger.debug('Amounts reduced: {}', new_amounts)
+        # logger.debug('Amounts reduced: {}', new_amounts)
         normalized = self.normalize_amounts_and_recalculate(
             symbols=(yz, xz, xy),
             direction=direction,
@@ -384,7 +384,7 @@ class ArbitrageDetector(QObject):
         if normalized is None:
             logger.debug('No reduced arbitrage available')
             return None
-        logger.debug('Reduced amounts normalized and recalculated: {}', normalized)
+        # logger.debug('Reduced amounts normalized and recalculated: {}', normalized)
         if direction == 'sell buy sell':
             new_actions = [
                 MarketAction(arb.actions[0].pair, 'sell', arb.actions[0].price, normalized['y']),
@@ -499,9 +499,9 @@ class ArbitrageDetector(QObject):
                 'z_spend': amount_z_spend_total,
                 'z_profit': profit_z_total
             }
-            logger.debug('Amounts before recalculation: {}', amounts)
+            # logger.debug('Amounts before recalculation: {}', amounts)
             amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
-            logger.debug('Amounts limited: {}', amounts)
+            # logger.debug('Amounts limited: {}', amounts)
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='sell buy sell',
@@ -509,7 +509,7 @@ class ArbitrageDetector(QObject):
                 prices=(prices['yz'], prices['xz'], prices['xy']),
                 orderbooks=orderbooks
             )
-            logger.debug('Amounts normalized and recalculated: {}', normalized)
+            # logger.debug('Amounts normalized and recalculated: {}', normalized)
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 self.existing_arbitrages[pairs]['sell buy sell'] = True
                 return Arbitrage(
@@ -573,9 +573,9 @@ class ArbitrageDetector(QObject):
                 'z_spend': amount_z_spend_total,
                 'z_profit': profit_z_total
             }
-            logger.debug('Amounts before recalculation: {}', amounts)
+            # logger.debug('Amounts before recalculation: {}', amounts)
             amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
-            logger.debug('Amounts limited: {}', amounts)
+            # logger.debug('Amounts limited: {}', amounts)
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='buy sell buy',
@@ -583,7 +583,7 @@ class ArbitrageDetector(QObject):
                 prices=(prices['yz'], prices['xz'], prices['xy']),
                 orderbooks=orderbooks
             )
-            logger.debug('Amounts normalized and recalculated: {}', normalized)
+            # logger.debug('Amounts normalized and recalculated: {}', normalized)
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 self.existing_arbitrages[pairs]['buy sell buy'] = True
                 return Arbitrage(
