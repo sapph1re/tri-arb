@@ -819,9 +819,17 @@ class BinanceApi(QObject):
 
             loop.exec()
 
+            # status_code = int(reply.attribute(QNetworkRequest.HttpStatusCodeAttribute))
+            # if status_code in [429, 418]:
+            #     # broke request limit, wait it out
+            #     time.sleep()
             response = bytes(reply.readAll()).decode("utf-8")
             try:
                 response_json = json.loads(response)
+                if 'msg' in response_json and 'too many' in response_json['msg']:
+                    logger.info('Too many requests, sleeping for two minutes...')
+                    time.sleep(120)
+                    return self.__call_api_sync_once(method, q_request, q_data)
                 return response_json
             except json.JSONDecodeError:
                 # logger.error('BAPI > JSON Decode FAILED: {}', str(response))
