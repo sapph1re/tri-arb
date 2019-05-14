@@ -1,5 +1,5 @@
 import time
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -162,11 +162,14 @@ class BinanceActionsExecutor(QThread):
                         logger.info('Order has been partially filled: {} {}', amount_filled, action.base)
                         if i < 2:
                             # emergency: revert partially executed amount
+                            amount_revert = (amount_filled * (1 - TRADE_FEE)).quantize(
+                                self.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
+                            )
                             emergency_actions.append(
                                 BinanceSingleAction(
                                     pair=action.pair,
                                     side='BUY' if action.side == 'SELL' else 'SELL',
-                                    quantity=amount_filled * (1 - TRADE_FEE),
+                                    quantity=amount_revert,
                                     order_type='MARKET'
                                 )
                             )
@@ -194,11 +197,14 @@ class BinanceActionsExecutor(QThread):
             # second action failed: revert first action
             action = actions_list[0]
             logger.info('Reverting first action: {}', action)
+            amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(
+                self.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
+            )
             emergency_actions.append(
                 BinanceSingleAction(
                     pair=action.pair,
                     side='BUY' if action.side == 'SELL' else 'SELL',
-                    quantity=action.quantity * (1 - TRADE_FEE),
+                    quantity=amount_revert,
                     order_type='MARKET'
                 )
             )
