@@ -198,7 +198,7 @@ class BinanceActionsExecutor(QThread):
             action = actions_list[0]
             logger.info('Reverting first action: {}', action)
             amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(
-                self.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
+                self.__detector.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
             )
             emergency_actions.append(
                 BinanceSingleAction(
