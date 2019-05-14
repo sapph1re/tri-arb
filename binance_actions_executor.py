@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import List, Tuple
 from collections import deque
 from PyQt5.QtCore import QThread, pyqtSignal
-from config import WAIT_ORDER_TO_FILL
+from config import WAIT_ORDER_TO_FILL, TRADE_FEE
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
@@ -160,15 +160,20 @@ class BinanceActionsExecutor(QThread):
                         break
                     if amount_filled > 0:
                         logger.info('Order has been partially filled: {} {}', amount_filled, action.base)
-                        # emergency: revert partially executed amount
-                        emergency_actions.append(
-                            BinanceSingleAction(
-                                pair=action.pair,
-                                side='BUY' if action.side == 'SELL' else 'SELL',
-                                quantity=amount_filled,
-                                order_type='MARKET'
+                        if i < 2:
+                            # emergency: revert partially executed amount
+                            emergency_actions.append(
+                                BinanceSingleAction(
+                                    pair=action.pair,
+                                    side='BUY' if action.side == 'SELL' else 'SELL',
+                                    quantity=amount_filled * (1 - TRADE_FEE),
+                                    order_type='MARKET'
+                                )
                             )
-                        )
+                        else:
+                            # emergency: finalize remaining amount
+                            actions_list[i].quantity -= amount_filled
+                            logger.info('Remaining amount: {}', actions_list[i].quantity)
                     break
                 if status in ['CANCELED', 'REJECTED', 'EXPIRED']:
                     # order failed for unclear reasons, just execute emergency actions
@@ -193,7 +198,7 @@ class BinanceActionsExecutor(QThread):
                 BinanceSingleAction(
                     pair=action.pair,
                     side='BUY' if action.side == 'SELL' else 'SELL',
-                    quantity=action.quantity,
+                    quantity=action.quantity * (1 - TRADE_FEE),
                     order_type='MARKET'
                 )
             )
@@ -211,22 +216,40 @@ class BinanceActionsExecutor(QThread):
             )
 
         for action in emergency_actions:
-            logger.info('Executing emergency action: {}...', action)
-            reply_json = self.__try_execute_action(action)
-            status = self.__get_order_status(reply_json)
-            if status == 'FILLED':
-                logger.info('Action completed')
-                continue
-            else:
-                logger.error(
-                    'Emergency market order FAILED: {}. Status: {}',
-                    action,
-                    str(status)
-                )
-                break
+            self.__execute_emergency_action(action)
 
         self.execution_finished.emit()
         logger.info('Executor finished')
+
+    def __execute_emergency_action(self, action):
+        logger.info('Executing emergency action: {}...', action)
+        while 1:
+            reply_json = self.__try_execute_action(action)
+            try:
+                status = self.__get_order_status(reply_json)
+            except BinanceActionException:
+                if 'msg' in reply_json and 'insufficient balance' in reply_json['msg']:
+                    # reduce action amount and try again
+                    qty_min, qty_max, qty_step = self.__detector.symbols_info[action.symbol].get_qty_filter()
+                    action.quantity -= qty_step
+                    if action.quantity < qty_min:
+                        logger.error('Insufficient balance to execute emergency action')
+                        return
+                    # try executing the action again with the reduced amount
+                    continue
+                else:
+                    logger.error('Failed to execute emergency action, server response: {}', reply_json)
+                    return
+            else:
+                break
+        if status == 'FILLED':
+            logger.info('Action completed')
+        else:
+            logger.error(
+                'Emergency action FAILED: {}. Status: {}',
+                action,
+                str(status)
+            )
 
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
         actions = self.__actions_list
@@ -303,6 +326,7 @@ class BinanceActionsExecutor(QThread):
         return actions
 
     def __try_execute_action(self, action: BinanceSingleAction):
+        logger.info('Executing action: {}...', action)
         return self.__api.createOrder(
             action.symbol,
             action.side,
@@ -314,7 +338,10 @@ class BinanceActionsExecutor(QThread):
         )
 
     def __get_order_status(self, reply_json) -> str or None:
-        status = reply_json['status']
+        try:
+            status = reply_json['status']
+        except KeyError:
+            raise BinanceActionException
         if status == 'NEW':
             symbol = reply_json['symbol']
             order_id = reply_json['orderId']
