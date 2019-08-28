@@ -1,11 +1,12 @@
 import sys
+from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
 from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR
 from binance_api import BinanceApi, BinanceSymbolInfo
-from binance_orderbook import BinanceOrderBook, BinanceDepthWebsocket
+from binance_orderbook import BinanceOrderbook, BinanceDepthWebsocket
 from triangles_finder import TrianglesFinder
-from PyQt5.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
+from helpers import dispatcher_connect_threadsafe
 from custom_logging import get_logger
 logger = get_logger(__name__)
 
@@ -100,8 +101,8 @@ class ArbitrageDetector(QObject):
                 self.websockets.append(ws)
                 i = 0
             # starting an orderbook watcher for every symbol
-            ob = BinanceOrderBook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws, thread=th)
-            ob.ob_updated.connect(self.on_orderbook_updated)
+            ob = BinanceOrderbook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws, thread=th)
+            dispatcher_connect_threadsafe(self.on_orderbook_changed, signal='orderbook_changed', sender=dispatcher.Any)
             self.orderbooks[symbol] = ob
             i += 1
         for thread in self.threads:
@@ -611,7 +612,7 @@ class ArbitrageDetector(QObject):
                 self.arbitrage_disappeared.emit(pairs, actions)
         return None
 
-    def on_orderbook_updated(self, symbol: str):
+    def on_orderbook_changed(self, sender, symbol: str):
         try:
             for triangle in self.symbols[symbol]['triangles']:
                 arbitrage = self.find_arbitrage_in_triangle(triangle)

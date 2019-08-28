@@ -1,9 +1,11 @@
 import time
+import asyncio
 from threading import Thread
 from concurrent.futures import Future
+from pydispatch import dispatcher, robustapply
 
 
-def pyqt_try_except(logger, class_name: str = 'Unknown Class', function_name: str = 'Unknown Function'):
+def catch_exceptions(logger, class_name: str = 'Unknown Class', function_name: str = 'Unknown Function'):
     def outer_wrapper(fn):
         def inner_wrapper(*args, **kwargs):
             try:
@@ -46,3 +48,37 @@ def timing(fn):
         print('{}() function took {:0.3f} ms <> {} <> {}'.format(f.__name__, diff, time1, time2))
         return ret
     return wrapper
+
+
+def robust_make_func(callback, *args, **kwargs):
+    """
+    Returns a function callable without arguments that executes callback() with provided arguments.
+    Filters out arguments that callback cannot handle.
+    :param callback: function to execute with provided arguments
+    :param args: arbitrary arguments passed to callback()
+    :param kwargs: arbitrary keyword arguments passed to callback()
+    :return: function, just call it with no arguments
+    """
+    def func():
+        return robustapply.robustApply(callback, *args, **kwargs)
+    return func
+
+
+def dispatcher_connect_threadsafe(handler, signal, sender) -> callable:
+    """
+    Do dispatcher.connect() in a threadsafe manner.
+    Schedules handler() execution as a handler for the arrived signal, but in the handler's original event loop.
+    :param handler: signal handler
+    :param signal: signal name
+    :param sender: signal sender
+    :return: disconnect function, simply call it to disconnect the handler from the signal.
+    """
+    loop = asyncio.get_event_loop()
+
+    def dispatcher_receive(*args, **kwargs):
+        loop.call_soon_threadsafe(robust_make_func(handler, *args, **kwargs))
+    dispatcher.connect(dispatcher_receive, signal=signal, sender=sender, weak=False)
+
+    def disconnect():
+        dispatcher.disconnect(dispatcher_receive, signal=signal, sender=sender, weak=False)
+    return disconnect

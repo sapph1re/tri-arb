@@ -149,7 +149,7 @@ class BinanceActionsExecutor(QThread):
                 if status in ['NEW', 'PARTIALLY_FILLED']:
                     # order is not filled, cancel it and execute emergency actions
                     logger.info('Action failed! Order is not filled. Cancelling order {} on symbol {}...', order_id, symbol)
-                    reply_json = self.__api.cancelOrder(symbol, order_id)
+                    reply_json = self.__api.cancel_order(symbol, order_id)
                     try:
                         amount_filled = Decimal(reply_json['executedQty'])
                     except KeyError:
@@ -333,7 +333,7 @@ class BinanceActionsExecutor(QThread):
 
     def __try_execute_action(self, action: BinanceSingleAction):
         logger.info('Executing action: {}...', action)
-        return self.__api.createOrder(
+        return self.__api.create_order(
             action.symbol,
             action.side,
             action.type,
@@ -353,7 +353,7 @@ class BinanceActionsExecutor(QThread):
             order_id = reply_json['orderId']
             # Order statuses in Binance:
             #   NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
-            reply_json = self.__api.orderInfo(symbol, order_id)
+            reply_json = self.__api.order_info(symbol, order_id)
             if reply_json and 'status' in reply_json:
                 status = reply_json['status']
         return status

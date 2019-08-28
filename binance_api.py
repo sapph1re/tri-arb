@@ -1,15 +1,8 @@
-import sys
-import time
-import hmac
-import hashlib
-import urllib.parse
-import json
-from typing import List, Dict, Callable
-from PyQt5.QtCore import (QByteArray, QUrl, QEventLoop, QTimer,
-                          QObject, pyqtSignal, pyqtSlot)
-from PyQt5.QtNetwork import (QNetworkAccessManager, QNetworkRequest, QNetworkReply)
+import asyncio
+from typing import List, Dict
+from binance import AsyncClient
+from binance.exceptions import BinanceAPIException
 from custom_logging import get_logger
-from helpers import pyqt_try_except
 
 
 logger = get_logger(__name__)
@@ -136,75 +129,16 @@ class BinanceSymbolInfo:
         return self.__min_notional
 
 
-class BinanceApi(QObject):
-    """
-    Более подробная информация: https://bablofil.ru/binance-api/
+class BinanceApi:
+    def __init__(self, client: AsyncClient):
+        self.client = client
 
-    Практически во всех подписанных запросах необходимо указывать параметр timestamp - это текущее unix-время в милиосекундах.
-    Но, так как некоторые сети бывают перегружены, то ваш запрос может заблудиться и придти позже.
-    Поэтому биржа предоставляет вам временное окно (по умолчанию 5000 милисекунд).
-    Если у вас запросы не успевают придти в это окно, вы можете его расширить с помощью параметра recvWindow.
-    """
+    @classmethod
+    async def create(cls, api_key, api_secret):
+        client = await AsyncClient.create(api_key, api_secret)
+        return cls(client)
 
-    methods = {
-        # public methods
-        'ping': {'url': 'api/v1/ping', 'method': 'GET', 'private': False},
-        'time': {'url': 'api/v1/time', 'method': 'GET', 'private': False},
-        'exchangeInfo': {'url': 'api/v1/exchangeInfo', 'method': 'GET', 'private': False},
-        'depth': {'url': 'api/v1/depth', 'method': 'GET', 'private': False},
-        'trades': {'url': 'api/v1/trades', 'method': 'GET', 'private': False},
-        'historicalTrades': {'url': 'api/v1/historicalTrades', 'method': 'GET', 'private': False},
-        'aggTrades': {'url': 'api/v1/aggTrades', 'method': 'GET', 'private': False},
-        'klines': {'url': 'api/v1/klines', 'method': 'GET', 'private': False},
-        'ticker24hr': {'url': 'api/v1/ticker/24hr', 'method': 'GET', 'private': False},
-        'tickerPrice': {'url': 'api/v3/ticker/price', 'method': 'GET', 'private': False},
-        'tickerBookTicker': {'url': 'api/v3/ticker/bookTicker', 'method': 'GET', 'private': False},
-        # private methods
-        'createOrder': {'url': 'api/v3/order', 'method': 'POST', 'private': True},
-        'testOrder': {'url': 'api/v3/order/test', 'method': 'POST', 'private': True},
-        'orderInfo': {'url': 'api/v3/order', 'method': 'GET', 'private': True},
-        'cancelOrder': {'url': 'api/v3/order', 'method': 'DELETE', 'private': True},
-        'openOrders': {'url': 'api/v3/openOrders', 'method': 'GET', 'private': True},
-        'allOrders': {'url': 'api/v3/allOrders', 'method': 'GET', 'private': True},
-        'account': {'url': 'api/v3/account', 'method': 'GET', 'private': True},
-        'myTrades': {'url': 'api/v3/myTrades', 'method': 'GET', 'private': True},
-    }
-
-    start_call_api_async = pyqtSignal(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
-
-    def __init__(self, api_key, api_secret, reply_timeout: int = 5000, default_tries: int = 10, parent=None):
-        super(BinanceApi, self).__init__(parent)
-
-        self.start_call_api_async.connect(self.__call_api_async)
-
-        self.api_key = api_key
-        self.api_secret = bytearray(api_secret, encoding='utf-8')
-        self.__q_nam = QNetworkAccessManager()
-
-        self.__reply_timeout = reply_timeout
-        self.__default_tries = default_tries
-
-        self.__time_delta = 0
-        time_response = self.time()
-        try:
-            server_time = time_response['serverTime']
-            self.__time_delta = int(server_time - time.time() * 1000)
-        except LookupError as e:
-            logger.info('BAPI > Time synchronization got BAD response: {}', str(e))
-
-    def ping(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Проверка связи - /api/v1/ping
-        Метод для проверки работы API.
-
-        Вес - 1
-
-        :return: пустой словарь в случае успеха.
-        {}
-        """
-        return self.__call_api(slot=slot, command='ping')
-
-    def time(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def time(self) -> dict:
         """
         Получение времени биржи - /api/v1/time
 
@@ -212,9 +146,9 @@ class BinanceApi(QObject):
 
         :return: словарь с текущим временем.
         """
-        return self.__call_api(slot=slot, command='time')
+        return await self.client.get_server_time()
 
-    def exchangeInfo(self, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def exchange_info(self) -> dict:
         """
         Настройки и лимиты биржи - /api/v1/exchangeInfo
 
@@ -222,9 +156,9 @@ class BinanceApi(QObject):
 
         :return: структура данных в словаре
         """
-        return self.__call_api(slot=slot, command='exchangeInfo')
+        return await self.client.get_exchange_info()
 
-    def depth(self, symbol: str, limit: int = 100, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def depth(self, symbol: str, limit: int = 100) -> dict:
         """
         Открытые ордера на бирже - /api/v1/depth
         Метод позволяет получить книгу ордеров.
@@ -242,167 +176,12 @@ class BinanceApi(QObject):
 
         :return: значения в словаре
         """
-        return self.__call_api(slot=slot, command='depth', symbol=symbol.upper(), limit=limit)
+        return await self.client.get_order_book(symbol=symbol.upper(), limit=limit)
 
-    def trades(self, symbol: str, limit: int = 500, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Последние (чужие) сделки - /api/v1/trades
-
-        Вес - 1
-
-        Параметры:
-            Обязательные:
-                :param symbol: пара
-            Необязательные:
-                :param limit: кол-во возвращаемых записей (максимум 500, по умолчанию 500).
-
-        :return: список словарей.
-        """
-        return self.__call_api(slot=slot, command='trades', symbol=symbol.upper(), limit=limit)
-
-    def aggTrades(self, symbol: str, fromID: int = None, limit: int = 500,
-                  startTime: int = None, endTime: int = None,
-                  slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Сжатая история сделок - /api/v1/aggTrades
-
-        Метод позволяет получить суммарную историю сделок. Сделки, выполненные в одно время по одному ордеру
-        и по одной цене будут представлены одной строкой с объединенным количеством.
-
-        Вес - 1
-
-        Параметры:
-            Обязательные:
-                :param symbol: пара
-            Необязательные:
-                :param fromID: показывать начиная со сделки № (включительно)
-                :param startTime: начиная с какого времени (включительно)
-                :param endTime: заканчивая каким временем (включительно)
-                :param limit: Кол-во записей (максимум 500, по умолчанию 500)
-
-        :return: список словарей
-        """
-        kwargs = {'command': 'aggTrades',
-                  'slot': slot,
-                  'symbol': symbol.upper(),
-                  'limit': limit}
-        if fromID:
-            kwargs['fromID'] = fromID
-        if startTime:
-            kwargs['startTime'] = startTime
-        if endTime:
-            kwargs['endTime'] = endTime
-        return self.__call_api(**kwargs)
-
-    def klines(self, symbol: str, interval: str = '15m', limit: int = 500,
-               startTime: int = None, endTime: int = None,
-               slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Данные по свечам – /api/v1/klines
-
-        Вес – 1
-
-        Параметры:
-            Обязательные:
-                :param symbol: пара
-                :param interval: период свечи
-                    Допустимые интервалы:
-                    •    1m     // 1 минута
-                    •    3m     // 3 минуты
-                    •    5m    // 5 минут
-                    •    15m  // 15 минут
-                    •    30m    // 30 минут
-                    •    1h    // 1 час
-                    •    2h    // 2 часа
-                    •    4h    // 4 часа
-                    •    6h    // 6 часов
-                    •    8h    // 8 часов
-                    •    12h    // 12 часов
-                    •    1d    // 1 день
-                    •    3d    // 3 дня
-                    •    1w    // 1 неделя
-                    •    1M    // 1 месяц
-            Необязательные:
-                :param limit: кол-во свечей (максимум 500, по умолчанию 500)
-                :param startTime: время начала построения
-                :param endTime: окончание периода
-                Если не указаны параметры startTime и endTime, то возвращаются самые последние свечи.
-
-        :return: список списков.
-        """
-        kwargs = {'command': 'klines',
-                  'slot': slot,
-                  'symbol': symbol.upper(),
-                  'interval': interval,
-                  'limit': limit}
-        if startTime:
-            kwargs['startTime'] = startTime
-        if endTime:
-            kwargs['endTime'] = endTime
-        return self.__call_api(**kwargs)
-
-    def ticker24hr(self, symbol: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Статистика за 24 часа - /api/v1/ticker/24hr
-
-        Вес – 1, если указана пара, иначе вес равен (количеству всех торгуемых пар)/2.
-
-        Параметры:
-            Необязательные:
-                :param symbol: пара
-                Если symbol не указан, возвращаются данные по всем парам.
-                В этом случае, считается, что вы сделали столько запросов к бирже, сколько вернулось пар.
-
-        :return: словарь, если указана пара, и список словарей, если пара не указана.
-        """
-        kwargs = {'command': 'ticker24hr',
-                  'slot': slot}
-        if symbol:
-            kwargs['symbol'] = symbol.upper()
-        return self.__call_api(**kwargs)
-
-    def tickerPrice(self, symbol: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Последняя цена по паре (или парам) - /api/v3/ticker/price
-
-        Вес - 1
-
-        Параметры:
-            Необязательные:
-                :param symbol: пара
-                Если параметр symbol не указан, то возвращаются цены по всем парам.
-
-        :return: словарь, если указана пара, и список словарей, если пара не указана.
-        """
-        kwargs = {'command': 'tickerPrice',
-                  'slot': slot}
-        if symbol:
-            kwargs['symbol'] = symbol.upper()
-        return self.__call_api(**kwargs)
-
-    def tickerBookTicker(self, symbol: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Лучшие цены покупки/продажи - /api/v3/ticker/bookTicker
-
-        Вес 1
-
-        Параметры:
-            Необязательные:
-                :param symbol: пара
-                Если параметр symbol не указан, возвращаются данные по всем парам.
-
-        :return: словарь, если указана пара, и список словарей, если пара не указана.
-        """
-        kwargs = {'command': 'tickerBookTicker',
-                  'slot': slot}
-        if symbol:
-            kwargs['symbol'] = symbol.upper()
-        return self.__call_api(**kwargs)
-
-    def createOrder(self, symbol: str, side: str, order_type: str, quantity,
-                    timeInForce: str = None, price=None, newClientOrderId: str = None,
-                    stopPrice=None, icebergQty=None, recvWindow: int = None,
-                    newOrderRespType: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def create_order(self, symbol: str, side: str, order_type: str, quantity,
+                           time_in_force: str = None, price=None, new_client_order_id: str = None,
+                           stop_price=None, iceberg_qty=None, recv_window: int = None,
+                           new_order_resp_type: str = None) -> dict:
         """
         Создание ордера - /api/v3/order
 
@@ -418,22 +197,22 @@ class BinanceApi(QObject):
                 timestamp: текущее время в миллисекундах (в коде, выложенном здесь, проставляется автоматически,
                     указывать не надо.
             Необязательные:
-                :param timeInForce: (GTC, IOC, FOK). По умолчанию GTC. Расшифрую.
+                :param time_in_force: (GTC, IOC, FOK). По умолчанию GTC. Расшифрую.
                     GTC (Good Till Cancelled) – ордер будет висеть до тех пор, пока его не отменят.
                     IOC (Immediate Or Cancel) – Будет куплено то количество, которое можно купить немедленно.
                         Все, что не удалось купить, будет отменено.
                     FOK (Fill-Or-Kill) – Либо будет куплено все указанное количество немедленно,
                         либо не будет куплено вообще ничего, ордер отменится.
                 :param price: цена
-                :param newClientOrderId: Идентификатор ордера, который вы сами придумаете (строка).
+                :param new_client_order_id: Идентификатор ордера, который вы сами придумаете (строка).
                     Если не указан, генерится автоматически.
-                :param stopPrice: стоп-цена, можно указывать если тип ордера STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT
+                :param stop_price: стоп-цена, можно указывать если тип ордера STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT
                     или TAKE_PROFIT_LIMIT.
-                :param icebergQty: кол-во для ордера-айсберга, можно указывать, если тип ордера LIMIT, STOP_LOSS_LIMIT
+                :param iceberg_qty: кол-во для ордера-айсберга, можно указывать, если тип ордера LIMIT, STOP_LOSS_LIMIT
                     and TAKE_PROFIT_LIMIT
-                :param recvWindow: кол-во миллисекунд, которое прибавляется к timestamp и
+                :param recv_window: кол-во миллисекунд, которое прибавляется к timestamp и
                     формирует окно действия запроса (см. выше). По умолчанию 5000.
-                :param newOrderRespType: какую информацию возвращать, если удалось создать ордер.
+                :param new_order_resp_type: какую информацию возвращать, если удалось создать ордер.
                     Допустимые значения ACK, RESULT, или FULL, по умолчанию RESULT.
 
         В зависимости от типа ордера, некоторые поля становятся обязательными:
@@ -461,32 +240,32 @@ class BinanceApi(QObject):
 
         :return: при создании ордера вернется словарь, содержимое которого зависит от newOrderRespType
         """
-        kwargs = {'command': 'createOrder',
-                  'slot': slot,
-                  'symbol': symbol.upper(),
-                  'side': side.upper(),
-                  'type': order_type.upper(),
-                  'quantity': quantity}
-        if timeInForce and order_type.upper() != 'MARKET':
-            kwargs['timeInForce'] = timeInForce
+        kwargs = {
+            'symbol': symbol.upper(),
+            'side': side.upper(),
+            'type': order_type.upper(),
+            'quantity': quantity
+        }
+        if time_in_force and order_type.upper() != 'MARKET':
+            kwargs['timeInForce'] = time_in_force
         if price:
             kwargs['price'] = price
-        if newClientOrderId:
-            kwargs['newClientOrderId'] = newClientOrderId
-        if stopPrice:
-            kwargs['stopPrice'] = stopPrice
-        if icebergQty:
-            kwargs['icebergQty'] = icebergQty
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        if newOrderRespType:
-            kwargs['newOrderRespType'] = newOrderRespType
-        return self.__call_api(**kwargs)
+        if new_client_order_id:
+            kwargs['newClientOrderId'] = new_client_order_id
+        if stop_price:
+            kwargs['stopPrice'] = stop_price
+        if iceberg_qty:
+            kwargs['icebergQty'] = iceberg_qty
+        if recv_window:
+            kwargs['recvWindow'] = recv_window
+        if new_order_resp_type:
+            kwargs['newOrderRespType'] = new_order_resp_type
+        return await self.client.create_order(**kwargs)
 
-    def testOrder(self, symbol: str, side: str, order_type: str, quantity,
-                  timeInForce: str = None, price=None, newClientOrderId: str = None,
-                  stopPrice=None, icebergQty=None, recvWindow: int = None,
-                  newOrderRespType: str = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def test_order(self, symbol: str, side: str, order_type: str, quantity,
+                         time_in_force: str = None, price=None, new_client_order_id: str = None,
+                         stop_price=None, iceberg_qty=None, recv_window: int = None,
+                         new_order_resp_type: str = None) -> dict:
         """
         Тестирование создания ордера: /api/v3/order/test
         Метод позволяет протестировать создание ордера – например, проверить, правильно ли настроены временные рамки. По факту такой ордер никогда не будет исполнен, и средства на его создание затрачены не будут.
@@ -503,51 +282,50 @@ class BinanceApi(QObject):
                 timestamp: текущее время в миллисекундах (в коде, выложенном здесь, проставляется автоматически,
                     указывать не надо.
             Необязательные:
-                :param timeInForce: (GTC, IOC, FOK). По умолчанию GTC. Расшифрую.
+                :param time_in_force: (GTC, IOC, FOK). По умолчанию GTC. Расшифрую.
                     GTC (Good Till Cancelled) – ордер будет висеть до тех пор, пока его не отменят.
                     IOC (Immediate Or Cancel) – Будет куплено то количество, которое можно купить немедленно.
                         Все, что не удалось купить, будет отменено.
                     FOK (Fill-Or-Kill) – Либо будет куплено все указанное количество немедленно,
                         либо не будет куплено вообще ничего, ордер отменится.
                 :param price: цена
-                :param newClientOrderId: Идентификатор ордера, который вы сами придумаете (строка).
+                :param new_client_order_id: Идентификатор ордера, который вы сами придумаете (строка).
                     Если не указан, генерится автоматически.
-                :param stopPrice: стоп-цена, можно указывать если тип ордера STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT
+                :param stop_price: стоп-цена, можно указывать если тип ордера STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT
                     или TAKE_PROFIT_LIMIT.
-                :param icebergQty: кол-во для ордера-айсберга, можно указывать, если тип ордера LIMIT, STOP_LOSS_LIMIT
+                :param iceberg_qty: кол-во для ордера-айсберга, можно указывать, если тип ордера LIMIT, STOP_LOSS_LIMIT
                     and TAKE_PROFIT_LIMIT
-                :param recvWindow: кол-во миллисекунд, которое прибавляется к timestamp и
+                :param recv_window: кол-во миллисекунд, которое прибавляется к timestamp и
                     формирует окно действия запроса (см. выше). По умолчанию 5000.
-                :param newOrderRespType: какую информацию возвращать, если удалось создать ордер.
+                :param new_order_resp_type: какую информацию возвращать, если удалось создать ордер.
                     Допустимые значения ACK, RESULT, или FULL, по умолчанию RESULT.
 
         :return: пустой словарь в случае успеха.
         """
-        kwargs = {'command': 'testOrder',
-                  'slot': slot,
-                  'symbol': symbol.upper(),
-                  'side': side.upper(),
-                  'type': order_type.upper(),
-                  'quantity': quantity}
-        if timeInForce:
-            kwargs['timeInForce'] = timeInForce
+        kwargs = {
+            'symbol': symbol.upper(),
+            'side': side.upper(),
+            'type': order_type.upper(),
+            'quantity': quantity
+        }
+        if time_in_force:
+            kwargs['timeInForce'] = time_in_force
         if price:
             kwargs['price'] = price
-        if newClientOrderId:
-            kwargs['newClientOrderId'] = newClientOrderId
-        if stopPrice:
-            kwargs['stopPrice'] = stopPrice
-        if icebergQty:
-            kwargs['icebergQty'] = icebergQty
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        if newOrderRespType:
-            kwargs['newOrderRespType'] = newOrderRespType
-        return self.__call_api(**kwargs)
+        if new_client_order_id:
+            kwargs['newClientOrderId'] = new_client_order_id
+        if stop_price:
+            kwargs['stopPrice'] = stop_price
+        if iceberg_qty:
+            kwargs['icebergQty'] = iceberg_qty
+        if recv_window:
+            kwargs['recvWindow'] = recv_window
+        if new_order_resp_type:
+            kwargs['newOrderRespType'] = new_order_resp_type
+        return await self.client.create_test_order(**kwargs)
 
-    def orderInfo(self, symbol: str, orderId: int = None,
-                  origClientOrderId: str = None, recvWindow: int = None,
-                  slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def order_info(self, symbol: str, order_id: int = None, orig_client_order_id: str = None,
+                         recv_window: int = None) -> dict:
         """
         Получить информацию по созданному ордеру.
 
@@ -557,29 +335,27 @@ class BinanceApi(QObject):
         Параметры:
             Обязательные:
                 :param symbol: пара
-                :param orderId: ID ордера, назначенный биржей
-                :param origClientOrderId: ID ордера, назначенный пользователем или сгенерированный (см. создание ордера)
-                Либо orderId либо origClientOrderId необходимо предоставить.
+                :param order_id: ID ордера, назначенный биржей
+                :param orig_client_order_id: ID ордера, назначенный пользователем или сгенерированный (см. создание ордера)
+                Либо order_id либо orig_client_order_id необходимо предоставить.
                 timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
             Необязательные:
-                :param recvWindow: окно валидности запроса.
+                :param recv_window: окно валидности запроса.
 
         :return: словарь.
         """
-        kwargs = {'command': 'orderInfo',
-                  'slot': slot,
-                  'symbol': symbol.upper()}
-        if orderId:
-            kwargs['orderId'] = orderId
+        kwargs = {'symbol': symbol.upper()}
+        if order_id:
+            kwargs['orderId'] = order_id
         else:
-            kwargs['origClientOrderId'] = origClientOrderId
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        return self.__call_api(**kwargs)
+            kwargs['origClientOrderId'] = orig_client_order_id
+        if recv_window:
+            kwargs['recvWindow'] = recv_window
+        return await self.client.get_order(**kwargs)
 
-    def cancelOrder(self, symbol: str, orderId: int = None,
-                    origClientOrderId: str = None, newClientOrderId: str = None,
-                    recvWindow: int = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def cancel_order(self, symbol: str, order_id: int = None,
+                           orig_client_order_id: str = None, new_client_order_id: str = None,
+                           recv_window: int = None) -> dict:
         """
         Отмена ордера - /api/v3/order
 
@@ -589,87 +365,28 @@ class BinanceApi(QObject):
         Параметры:
             Обязательные:
                 :param symbol: пара
-                :param orderId: ID ордера, назначенный биржей
-                :param origClientOrderId: ID ордера, назначенный пользователем или сгенерированный (см. создание ордера)
+                :param order_id: ID ордера, назначенный биржей
+                :param orig_client_order_id: ID ордера, назначенный пользователем или сгенерированный (см. создание ордера)
                 Либо orderId либо origClientOrderId необходимо предоставить.
                 timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
             Необязательные:
-                :param newClientOrderId: позволяет однозначно определить отмену, если не указано, генерируется автоматически
-                :param recvWindow: окно валидности запроса.
+                :param new_client_order_id: позволяет однозначно определить отмену, если не указано, генерируется автоматически
+                :param recv_window: окно валидности запроса.
 
         :return: словарь.
         """
-        kwargs = {'command': 'cancelOrder',
-                  'slot': slot,
-                  'symbol': symbol.upper()}
-        if orderId:
-            kwargs['orderId'] = orderId
+        kwargs = {'symbol': symbol.upper()}
+        if order_id:
+            kwargs['orderId'] = order_id
         else:
-            kwargs['origClientOrderId'] = origClientOrderId
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        if newClientOrderId:
-            kwargs['newClientOrderId'] = newClientOrderId
-        return self.__call_api(**kwargs)
+            kwargs['origClientOrderId'] = orig_client_order_id
+        if recv_window:
+            kwargs['recvWindow'] = recv_window
+        if new_client_order_id:
+            kwargs['newClientOrderId'] = new_client_order_id
+        return await self.client.cancel_order(**kwargs)
 
-    def openOrders(self, symbol: str = None, recvWindow: int = None,
-                   slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Текущие открытые пользователем ордера - /api/v3/openOrders
-
-        Вес – 1 если указана пара, либо (количество всех открытых для торгов пар) / 2.
-        Метод – GET
-
-        Параметры:
-            Обязательные:
-                timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
-            Необязательные:
-                :param symbol: пара
-                :param recvWindow: окно валидности запроса.
-
-        :return: список словарей.
-        """
-        kwargs = {'command': 'openOrders',
-                  'slot': slot}
-        if symbol:
-            kwargs['symbol'] = symbol.upper()
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        return self.__call_api(**kwargs)
-
-    def allOrders(self, symbol: str, orderId: int = None,
-                  limit: int = None, recvWindow: int = None,
-                  slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Все ордера пользователя вообще - /api/v3/allOrders
-        Метод позволяет получить вообще все ордера пользователя – открытые, исполненные или отмененные.
-
-        Вес – 5
-        Метод – GET
-
-        Параметры:
-            Обязательные:
-                :param symbol: пара
-                timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
-            Не обязательные:
-                :param orderId: Если указан, то вернутся все ордера, которые >= указанному. Если не указан, вернутся самые последние.
-                :param limit: кол-во возвращаемых ордеров (максимум 500, по умолчанию 500)
-                :param recvWindow: окно валидности запроса.
-
-        :return: список словарей.
-        """
-        kwargs = {'command': 'allOrders',
-                  'slot': slot,
-                  'symbol': symbol.upper()}
-        if orderId:
-            kwargs['orderId'] = orderId
-        if limit:
-            kwargs['limit'] = limit
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        return self.__call_api(**kwargs)
-
-    def account(self, recvWindow: int = None, slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
+    async def account(self, recv_window: int = None) -> dict:
         """
         Информация по аккаунту - /api/v3/account
 
@@ -680,186 +397,16 @@ class BinanceApi(QObject):
             Обязательные:
                 timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
             Не обязательные:
-                :param recvWindow: окно валидности запроса.
+                :param recv_window: окно валидности запроса.
 
         :return: словарь.
         """
-        kwargs = {'command': 'account',
-                  'slot': slot}
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        return self.__call_api(**kwargs)
+        kwargs = {}
+        if recv_window:
+            kwargs['recvWindow'] = recv_window
+        return await self.client.get_account(**kwargs)
 
-    def myTrades(self, symbol: str, limit: int = None,
-                 fromId: int = None, recvWindow: int = None,
-                 slot: Callable[[], None] or None = None) -> QNetworkReply or dict:
-        """
-        Список сделок пользователя - /api/v3/myTrades
-        Метод позволяет получить историю торгов авторизованного пользователя по указанной паре.
-
-        Вес – 5.
-
-        Параметры:
-            Обязательные:
-                :param symbol: пара
-                timestamp: текущее время (в представленном коде проставляется автоматически, указывать не надо)
-            Не обязательные:
-                :param limit: кол-во возвращаемых сделок (максимум 500, по умолчанию 500)
-                :param fromId: с какой сделки начинать вывод. По умолчанию выводятся самые последние.
-                :param recvWindow: окно валидности запроса.
-
-        :return: список словарей.
-        """
-        kwargs = {'command': 'myTrades',
-                  'slot': slot,
-                  'symbol': symbol.upper()}
-        if limit:
-            kwargs['limit'] = limit
-        if fromId:
-            kwargs['fromId'] = fromId
-        if recvWindow:
-            kwargs['recvWindow'] = recvWindow
-        return self.__call_api(**kwargs)
-
-    def __call_api(self, **kwargs) -> dict or None:
-        command = kwargs.pop('command')
-        slot = kwargs.pop('slot')
-        api_url = 'https://api.binance.com/' + self.methods[command]['url']
-
-        payload = kwargs
-        headers = {}
-
-        method = self.methods[command]['method']
-        private = self.methods[command]['private']
-
-        if private:
-            payload.update({'timestamp': int(time.time() * 1000) + self.__time_delta})
-
-            sign = hmac.new(
-                key=self.api_secret,
-                msg=urllib.parse.urlencode(payload).encode('utf-8'),
-                digestmod=hashlib.sha256
-            ).hexdigest()
-
-            payload.update({'signature': sign})
-            headers = dict()
-            headers['X-MBX-APIKEY'] = self.api_key
-            headers['Content-Type'] = 'application/x-www-form-urlencoded'
-
-        if method == 'GET':
-            api_url += '?' + urllib.parse.urlencode(payload)
-
-        q_url = QUrl(api_url)
-        q_data = QByteArray()
-        key_list = list(payload.keys())
-        for key in key_list:
-            param = str(key) + '=' + str(payload[key])
-            if key is not key_list[-1]:
-                param += '&'
-            q_data.append(param)
-
-        q_request = QNetworkRequest()
-        q_request.setUrl(q_url)
-        for k, v in headers.items():
-            header = QByteArray().append(k)
-            value = QByteArray().append(v)
-            q_request.setRawHeader(header, value)
-
-        if slot:
-            self.start_call_api_async.emit(method, slot, q_request, q_data)
-            return None
-        else:
-            return self.__call_api_sync(method=method, q_request=q_request, q_data=q_data)
-
-    def __call_api_sync(self, **kwargs) -> dict or None:
-        """
-        Will retry calling in case of failure. Number of tries is configurable
-        both via the argument and via default number that is set in constructor.
-        """
-        result = None
-        tries = int(kwargs.pop('tries', self.__default_tries))
-        # if kwargs['method'] == 'GET':
-        #     logger.debug('Calling API: GET {}', kwargs['q_request'].url())
-        # else:
-        #     logger.debug(
-        #         'Calling API: {} {}\nData: {}', kwargs['method'], kwargs['q_request'].url(), kwargs['q_data']
-        #     )
-        while tries > 0:
-            result = self.__call_api_sync_once(**kwargs)
-            if 'error' not in result:
-                break
-            tries -= 1
-            # logger.warning(
-            #     'API call failed: {}. Error: {}. Tries left: {}. Retrying...',
-            #     kwargs['q_request'].url(), result['error'], tries
-            # )
-        if tries == 0:
-            logger.error('API call failed a few tries in a row: {} {}', kwargs['method'], kwargs['q_request'].url())
-        return result
-
-    def __call_api_sync_once(self, method: str, q_request: QNetworkRequest, q_data: QByteArray) -> dict:
-        reply = None
-        if method == 'POST':
-            reply = self.__q_nam.post(q_request, q_data)
-        elif method == 'DELETE':
-            reply = self.__q_nam.sendCustomRequest(q_request, 'DELETE'.encode('utf-8'), q_data)
-        elif method == 'GET':
-            reply = self.__q_nam.get(q_request)
-        else:
-            logger.error('BAPI > Request: No such method!')
-
-        if reply:
-            # logger.debug('BAPI > Request without slot defined can slow down the application!')
-            loop = QEventLoop()
-            reply.finished.connect(loop.quit)
-
-            timer = QTimer()
-            timer.timeout.connect(reply.abort)
-            timer.start(self.__reply_timeout)  # msec
-
-            loop.exec()
-
-            # status_code = int(reply.attribute(QNetworkRequest.HttpStatusCodeAttribute))
-            # if status_code in [429, 418]:
-            #     # broke request limit, wait it out
-            #     time.sleep()
-            response = bytes(reply.readAll()).decode("utf-8")
-            try:
-                response_json = json.loads(response)
-                if 'msg' in response_json and 'too many' in response_json['msg']:
-                    logger.info('Too many requests, sleeping for two minutes...')
-                    time.sleep(120)
-                    return self.__call_api_sync_once(method, q_request, q_data)
-                return response_json
-            except json.JSONDecodeError:
-                # logger.error('BAPI > JSON Decode FAILED: {}', str(response))
-                return {'error': 'Response is not JSON: {}'.format(str(response))}
-        else:
-            logger.error('BAPI> Request FAILED: No Reply')
-            return {'error': 'No Reply'}
-
-    @pyqtSlot(str, 'PyQt_PyObject', 'QNetworkRequest', 'QByteArray')
-    @pyqt_try_except(logger, 'BAPI', '__call_api_async')
-    def __call_api_async(self, method, slot, q_request, q_data):
-        reply = None
-        if method == 'POST':
-            reply = self.__q_nam.post(q_request, q_data)
-        elif method == 'DELETE':
-            reply = self.__q_nam.deleteResource(q_request)
-        elif method == 'GET':
-            reply = self.__q_nam.get(q_request)
-        else:
-            logger.error('BAPI > Request: No such method!')
-
-        if reply:
-            reply.finished.connect(slot)
-            timer = QTimer()
-            timer.timeout.connect(reply.abort)
-            timer.start(self.__reply_timeout)  # msec
-        else:
-            logger.error('BAPI > Request FAILED: No Reply')
-
-    def get_symbols_info_json(self) -> List[dict]:
+    async def get_symbols_info_json(self) -> List[dict]:
         """
         :return: list of dictionaries with symbols info:
         {
@@ -898,112 +445,41 @@ class BinanceApi(QObject):
             ]
         }
         """
-        response_json = self.exchangeInfo()
+        response_json = await self.exchange_info()
         try:
             symbols_info = response_json['symbols']
         except LookupError:
             return []
         return symbols_info
 
-    def get_symbols_info(self) -> Dict[str, BinanceSymbolInfo]:
-        return {each['symbol']: BinanceSymbolInfo(each) for each in self.get_symbols_info_json()}
+    async def get_symbols_info(self) -> Dict[str, BinanceSymbolInfo]:
+        return {
+            each['symbol']: BinanceSymbolInfo(each)
+            for each in await self.get_symbols_info_json()
+        }
 
 
-class _SelfTestReceiver(QObject):
-
-    def __init__(self):
-        super(_SelfTestReceiver, self).__init__()
-        self.__counter = 0
-
-    @pyqtSlot()
-    @pyqt_try_except(logger, 'BAPI _SelfTestReceiver', 'receive_slot')
-    def receive_slot(self):
-        self.__counter += 1
-        reply = self.sender()
-        request = reply.request()
-        request_url = str(request.url().path()).ljust(25)
-        response = bytes(reply.readAll()).decode("utf-8")
-        try:
-            response_json = json.loads(response)
-            response_out = response_json
-        except json.JSONDecodeError:
-            response_out = response
-        print('{}: from {} : {} ### {}'.format(str(self.__counter).zfill(2), reply.operation(),
-                                               request_url, response_out))
-
-    def print(self, method, message):
-        self.__counter += 1
-        method = method.ljust(20)
-        print('{}: from {} ### {}'.format(str(self.__counter).zfill(2), method, message))
-
-    def reset_counter(self):
-        self.__counter = 0
-
-
-def _main():
-    from PyQt5.QtCore import QCoreApplication, QTimer
+async def main():
     from config import API_KEY, API_SECRET
 
-    app = QCoreApplication(sys.argv)
-
-    bapi = BinanceApi(API_KEY, API_SECRET)
-    tr = _SelfTestReceiver()
-    slot = tr.receive_slot
-    # for i in range(10):
-    #     QTimer.singleShot(0, lambda: bapi.time(slot))
-
-    sync_func_list = [('ping', lambda: bapi.ping()),
-                      ('time', lambda: bapi.time()),
-                      ('exchangeInfo', lambda: bapi.exchangeInfo()),
-                      ('depth', lambda: bapi.depth('ethbtc', limit=5)),
-                      ('trades', lambda: bapi.trades('ethbtc', limit=5)),
-                      ('aggTrades', lambda: bapi.aggTrades('ethbtc', limit=5)),
-                      ('klines', lambda: bapi.klines('ethbtc', limit=5)),
-                      ('ticker24hr', lambda: bapi.ticker24hr('ethbtc')),
-                      ('tickerPrice', lambda: bapi.tickerPrice()),
-                      ('tickerBookTicker', lambda: bapi.tickerBookTicker(symbol='ethbtc')),
-                      ('testOrder', lambda: bapi.testOrder('ethbtc', 'BUY', 'MARKET', 0.5)),
-                      ('orderInfo', lambda: bapi.orderInfo('ethbtc', 56577459)),
-                      ('cancelOrder', lambda: bapi.cancelOrder('ethbtc', 56577459)),
-                      ('openOrders', lambda: bapi.openOrders()),
-                      ('allOrders', lambda: bapi.allOrders('ethbtc', limit=5)),
-                      ('account', lambda: bapi.account()),
-                      ('myTrades', lambda: bapi.myTrades('ethbtc', limit=5))]
-
-    async_func_list = [lambda: bapi.ping(slot=slot),
-                       lambda: bapi.time(slot=slot),
-                       lambda: bapi.exchangeInfo(slot=slot),
-                       lambda: bapi.depth('ethbtc', limit=5, slot=slot),
-                       lambda: bapi.trades('ethbtc', limit=5, slot=slot),
-                       lambda: bapi.aggTrades('ethbtc', limit=5, slot=slot),
-                       lambda: bapi.klines('ethbtc', limit=5, slot=slot),
-                       lambda: bapi.ticker24hr('ethbtc', slot=slot),
-                       lambda: bapi.tickerPrice(slot=slot),
-                       lambda: bapi.tickerBookTicker(symbol='ethbtc', slot=slot),
-                       lambda: bapi.testOrder('ethbtc', 'BUY', 'MARKET', 0.5, slot=slot),
-                       lambda: bapi.orderInfo('ethbtc', 56577459, slot=slot),
-                       lambda: bapi.cancelOrder('ethbtc', 56577459, slot=slot),
-                       lambda: bapi.openOrders(slot=slot),
-                       lambda: bapi.allOrders('ethbtc', limit=5, slot=slot),
-                       lambda: bapi.account(slot=slot),
-                       lambda: bapi.myTrades('ethbtc', limit=5, slot=slot)]
-
-    print('<> Summary {} functions!'.format(len(sync_func_list)))
-    print('> Synchronous calls:')
-    tr.reset_counter()
-    for method, func in sync_func_list:
-        tr.print(method, func())
-    print()
-    print('<> Summary {} functions!'.format(len(async_func_list)))
-    print('> Asynchronous calls:')
-    tr.reset_counter()
-    for func in async_func_list:
-        QTimer.singleShot(0, func)
-
-    QTimer.singleShot(5000, app.exit)
-
-    sys.exit(app.exec_())
+    api = await BinanceApi.create(API_KEY, API_SECRET)
+    funcs = [
+        api.time(),
+        api.exchange_info(),
+        api.depth(symbol='ethbtc', limit=5),
+        api.test_order(symbol='ethbtc', side='BUY', order_type='MARKET', quantity=0.5),
+        api.order_info(symbol='ethbtc', order_id=56577459),
+        api.cancel_order(symbol='ethbtc', order_id=56577459),
+        api.account()
+    ]
+    for func in funcs:
+        try:
+            result = await func
+        except BinanceAPIException as e:
+            result = str(e)
+        print(f'{func.__name__}():\t{result}')
 
 
 if __name__ == '__main__':
-    _main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
