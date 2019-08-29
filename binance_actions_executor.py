@@ -7,7 +7,7 @@ from config import WAIT_ORDER_TO_FILL, TRADE_FEE
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
-from custom_logging import get_logger
+from logger import get_logger
 
 
 logger = get_logger(__name__)
@@ -111,7 +111,7 @@ class BinanceActionsExecutor(QThread):
         self.action_executed.connect(self.__account_info.update_info_async)
 
         actions_list = self.__get_executable_actions_list()
-        logger.info('Executable actions list: {}', actions_list)
+        logger.info(f'Executable actions list: {actions_list}')
 
         # actions list is required to be exactly 3 actions for now
         actions_length = len(actions_list)
@@ -120,7 +120,7 @@ class BinanceActionsExecutor(QThread):
             self.execution_finished.emit()
             return
         if actions_length != 3:
-            logger.error('Bad actions list: {}', actions_list)
+            logger.error(f'Bad actions list: {actions_list}')
             self.execution_finished.emit()
             return
 
@@ -129,9 +129,9 @@ class BinanceActionsExecutor(QThread):
 
         for i in range(actions_length):
             action = actions_list[i]
-            logger.info('Executing action: {}...', action)
+            logger.info(f'Executing action: {action}...')
             reply_json = self.__try_execute_action(action)
-            # logger.debug('Order creation response: {}', reply_json)
+            # logger.debug(f'Order creation response: {reply_json}')
 
             if not reply_json or 'error' in reply_json:
                 # order creation failed, execute emergency actions
@@ -148,18 +148,18 @@ class BinanceActionsExecutor(QThread):
                 # possible statuses: NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
                 if status in ['NEW', 'PARTIALLY_FILLED']:
                     # order is not filled, cancel it and execute emergency actions
-                    logger.info('Action failed! Order is not filled. Cancelling order {} on symbol {}...', order_id, symbol)
+                    logger.info(f'Action failed! Order is not filled. Cancelling order {order_id} on symbol {symbol}...')
                     reply_json = self.__api.cancel_order(symbol, order_id)
                     try:
                         amount_filled = Decimal(reply_json['executedQty'])
                     except KeyError:
                         if reply_json['msg'] == 'Unknown order sent.':
-                            logger.warning('Order {} {} not found, already completed?', symbol, order_id)
+                            logger.warning(f'Order {symbol} {order_id} not found, already completed?')
                         else:
-                            logger.error('Order cancellation failed, response: {}', reply_json)
+                            logger.error(f'Order cancellation failed, response: {reply_json}')
                         break
                     if amount_filled > 0:
-                        logger.info('Order has been partially filled: {} {}', amount_filled, action.base)
+                        logger.info(f'Order has been partially filled: {amount_filled} {action.base}')
                         if i < 2:
                             # emergency: revert partially executed amount
                             amount_revert = (amount_filled * (1 - TRADE_FEE)).quantize(
@@ -176,11 +176,11 @@ class BinanceActionsExecutor(QThread):
                         else:
                             # emergency: finalize remaining amount
                             actions_list[i].quantity -= amount_filled
-                            logger.info('Remaining amount: {}', actions_list[i].quantity)
+                            logger.info(f'Remaining amount: {actions_list[i].quantity}')
                     break
                 if status in ['CANCELED', 'REJECTED', 'EXPIRED']:
                     # order failed for unclear reasons, just execute emergency actions
-                    logger.info('Action failed! Unexpected order status: {}.', status)
+                    logger.info(f'Action failed! Unexpected order status: {status}.')
                     break
 
                 logger.info('Action completed!')
@@ -196,7 +196,7 @@ class BinanceActionsExecutor(QThread):
         elif i == 1:
             # second action failed: revert first action
             action = actions_list[0]
-            logger.info('Reverting first action: {}', action)
+            logger.info(f'Reverting first action: {action}')
             amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(
                 self.__detector.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
             )
@@ -211,7 +211,7 @@ class BinanceActionsExecutor(QThread):
         elif i == 2:
             # third action failed: complete third action as a market order
             action = actions_list[2]
-            logger.info('Finalizing last action: {}, as a market order', action)
+            logger.info(f'Finalizing last action: {action}, as a market order')
             emergency_actions.append(
                 BinanceSingleAction(
                     pair=action.pair,
@@ -228,7 +228,7 @@ class BinanceActionsExecutor(QThread):
         logger.info('Executor finished')
 
     def __execute_emergency_action(self, action):
-        logger.info('Executing emergency action: {}...', action)
+        logger.info(f'Executing emergency action: {action}...')
         while 1:
             reply_json = self.__try_execute_action(action)
             try:
@@ -244,7 +244,7 @@ class BinanceActionsExecutor(QThread):
                     # try executing the action again with the reduced amount
                     continue
                 else:
-                    logger.error('Failed to execute emergency action, server response: {}', reply_json)
+                    logger.error(f'Failed to execute emergency action, server response: {reply_json}')
                     return
             else:
                 break
@@ -259,10 +259,10 @@ class BinanceActionsExecutor(QThread):
 
     def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
         actions = self.__actions_list
-        logger.debug('Initial actions list: {}', actions)
+        logger.debug(f'Initial actions list: {actions}')
         # actions list is expected to be exactly three items long, in a triangle
         if len(actions) != 3:
-            logger.error('Number of actions is not 3: {}', actions)
+            logger.error(f'Number of actions is not 3: {actions}')
             return []
         # first rearrange actions in a sequence to pass funds along the sequence
         gain = []
@@ -281,9 +281,9 @@ class BinanceActionsExecutor(QThread):
             # sequence needs to be rearranged
             actions = [actions[0], actions[2], actions[1]]
         else:
-            logger.error('Bad actions list: not a valid triangle! Actions: {}', actions)
+            logger.error(f'Bad actions list: not a valid triangle! Actions: {actions}')
             return []
-        logger.debug('Sequenced actions list: {}', actions)
+        logger.debug(f'Sequenced actions list: {actions}')
         # then figure out which action to start with and rotate the sequence
         candidates = []
         shift = 0
@@ -301,7 +301,7 @@ class BinanceActionsExecutor(QThread):
                 asset = base
                 amount = quantity
             balance = self.__account_info.get_balance(asset)
-            logger.debug('{} balance: {:.8f}', asset, balance)
+            logger.debug(f'{asset} balance: {balance:.8f}')
             candidates.append(balance / amount)
         # we will start with the action that has the highest balance/amount proportion
         proportion = max(candidates)
@@ -309,12 +309,12 @@ class BinanceActionsExecutor(QThread):
         shift = -idx
         if shift != 0:
             dq = deque(actions)
-            # logger.debug('Rotating actions list by: {}', shift)
+            # logger.debug(f'Rotating actions list by: {shift}')
             dq.rotate(shift)
             actions = list(dq)
         if proportion < 1:
             # recalculate action amounts to fit in our balance and keep the arbitrage profitable
-            logger.debug('Reducing the arbitrage by: {}', proportion)
+            logger.debug(f'Reducing the arbitrage by: {proportion}')
             reduced = self.__detector.reduce_arbitrage(
                 arb=self.__arbitrage,
                 reduce_factor=proportion
@@ -328,11 +328,11 @@ class BinanceActionsExecutor(QThread):
                     a for a in reduced.actions if a.pair == action.pair and a.action.upper() == action.side
                 ), None)
                 action.quantity = a.amount
-            logger.debug('Reduced arbitrage actions list: {}', actions)
+            logger.debug(f'Reduced arbitrage actions list: {actions}')
         return actions
 
     def __try_execute_action(self, action: BinanceSingleAction):
-        logger.info('Executing action: {}...', action)
+        logger.info(f'Executing action: {action}...')
         return self.__api.create_order(
             action.symbol,
             action.side,

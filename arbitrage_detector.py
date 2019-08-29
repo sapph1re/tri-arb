@@ -7,7 +7,7 @@ from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_orderbook import BinanceOrderbook, BinanceDepthWebsocket
 from triangles_finder import TrianglesFinder
 from helpers import dispatcher_connect_threadsafe
-from custom_logging import get_logger
+from logger import get_logger
 logger = get_logger(__name__)
 
 
@@ -74,8 +74,8 @@ class ArbitrageDetector(QObject):
         self.symbols_info = symbols_info
         self.triangles = TrianglesFinder().make_triangles(symbols_info)
         self.triangles, self.symbols = self._verify_triangles(self.triangles)
-        # logger.debug('Triangles: {}', self.triangles)
-        # logger.debug('Symbols: {}', self.symbols)
+        # logger.debug(f'Triangles: {self.triangles}')
+        # logger.debug(f'Symbols: {self.symbols}')
 
         # load order amount requirements
         self.symbols_filters = {}
@@ -152,7 +152,7 @@ class ArbitrageDetector(QObject):
         return triangles_verified, symbols
 
     def report_arbitrage(self, arbitrage: Arbitrage):
-        logger.info('Arbitrage found: {}', arbitrage)
+        logger.info(f'Arbitrage found: {arbitrage}')
         self.arbitrage_detected.emit(arbitrage)
 
     def calculate_amounts_on_price_level(self, direction: str, yz: tuple, xz: tuple, xy: tuple) -> tuple:
@@ -214,7 +214,7 @@ class ArbitrageDetector(QObject):
             if amount_left <= 0:
                 break
         if amount_left < 0:
-            logger.critical('calculate_counter_amount() is bad: amount_left is negative: {}', amount_left)
+            logger.critical(f'calculate_counter_amount() is bad: amount_left is negative: {amount_left}')
             raise Exception('Critical calculation error')
         return counter_amount
 
@@ -233,7 +233,7 @@ class ArbitrageDetector(QObject):
         for amount_type, symbol in amounts_to_symbols.items():
             # check that we have all symbols info
             if symbol not in self.symbols_filters:
-                logger.warning('Missing {} symbol filters. Normalization failed.', symbol)
+                logger.warning(f'Missing {symbol} symbol filters. Normalization failed.')
                 return None
             # make sure that min_amount <= order amount <= max_amount
             if amounts[amount_type] < self.symbols_filters[symbol]['min_amount']:
@@ -271,7 +271,7 @@ class ArbitrageDetector(QObject):
         yz, xz, xy = symbols
         prices = {yz: prices[0], xz: prices[1], xy: prices[2]}
         orderbooks = {yz: orderbooks[0], xz: orderbooks[1], xy: orderbooks[2]}
-        # logger.debug('Amounts before normalizing: {}. Prices: {}. Symbols: {}. Direction: {}.', amounts, prices, symbols, direction)
+        # logger.debug(f'Amounts before normalizing: {amounts}. Prices: {prices}. Symbols: {symbols}. Direction: {direction}.')
         # normalize amounts to comply with min/max order amounts and min amount step
         if direction == 'sell buy sell':
             amounts_new = self.normalize_amounts(amounts, {'y': yz, 'x_buy': xz, 'x_sell': xy}, prices)
@@ -326,7 +326,7 @@ class ArbitrageDetector(QObject):
             amounts_new['z_spend'] = self.calculate_counter_amount(amounts_new['y'], orderbooks[yz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
         else:
-            logger.warning('Bad direction: {}', direction)
+            logger.warning(f'Bad direction: {direction}')
             return None
         # make sure it's still profitable
         if amounts_new['z_profit'] < 0:
@@ -372,9 +372,9 @@ class ArbitrageDetector(QObject):
         yz = ''.join(arb.actions[0].pair)
         xz = ''.join(arb.actions[1].pair)
         xy = ''.join(arb.actions[2].pair)
-        # logger.debug('Amounts before reduction: {}', amounts)
+        # logger.debug(f'Amounts before reduction: {amounts}')
         new_amounts = self.limit_amounts(amounts, reduce_factor)
-        # logger.debug('Amounts reduced: {}', new_amounts)
+        # logger.debug(f'Amounts reduced: {new_amounts}')
         normalized = self.normalize_amounts_and_recalculate(
             symbols=(yz, xz, xy),
             direction=direction,
@@ -385,7 +385,7 @@ class ArbitrageDetector(QObject):
         if normalized is None:
             logger.debug('No reduced arbitrage available')
             return None
-        # logger.debug('Reduced amounts normalized and recalculated: {}', normalized)
+        # logger.debug(f'Reduced amounts normalized and recalculated: {normalized}')
         if direction == 'sell buy sell':
             new_actions = [
                 MarketAction(arb.actions[0].pair, 'sell', arb.actions[0].price, normalized['y']),
@@ -500,9 +500,9 @@ class ArbitrageDetector(QObject):
                 'z_spend': amount_z_spend_total,
                 'z_profit': profit_z_total
             }
-            # logger.debug('Amounts before recalculation: {}', amounts)
+            # logger.debug(f'Amounts before recalculation: {amounts}')
             amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
-            # logger.debug('Amounts limited: {}', amounts)
+            # logger.debug(f'Amounts limited: {amounts}')
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='sell buy sell',
@@ -510,7 +510,7 @@ class ArbitrageDetector(QObject):
                 prices=(prices['yz'], prices['xz'], prices['xy']),
                 orderbooks=orderbooks
             )
-            # logger.debug('Amounts normalized and recalculated: {}', normalized)
+            # logger.debug(f'Amounts normalized and recalculated: {normalized}')
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 self.existing_arbitrages[pairs]['sell buy sell'] = True
                 return Arbitrage(
@@ -574,9 +574,9 @@ class ArbitrageDetector(QObject):
                 'z_spend': amount_z_spend_total,
                 'z_profit': profit_z_total
             }
-            # logger.debug('Amounts before recalculation: {}', amounts)
+            # logger.debug(f'Amounts before recalculation: {amounts}')
             amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
-            # logger.debug('Amounts limited: {}', amounts)
+            # logger.debug(f'Amounts limited: {amounts}')
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='buy sell buy',
@@ -584,7 +584,7 @@ class ArbitrageDetector(QObject):
                 prices=(prices['yz'], prices['xz'], prices['xy']),
                 orderbooks=orderbooks
             )
-            # logger.debug('Amounts normalized and recalculated: {}', normalized)
+            # logger.debug(f'Amounts normalized and recalculated: {normalized}')
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 self.existing_arbitrages[pairs]['buy sell buy'] = True
                 return Arbitrage(
@@ -634,7 +634,7 @@ if __name__ == '__main__':
     #     i += 1
     #     if i >= 20:
     #         break
-    # logger.debug('All Symbols Info: {}', symbols_info)
+    # logger.debug(f'All Symbols Info: {symbols_info}')
     detector = ArbitrageDetector(
         api=api,
         symbols_info=symbols_info,

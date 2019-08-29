@@ -4,7 +4,7 @@ import ssl
 import time
 import json
 from pydispatch import dispatcher
-from custom_logging import get_logger
+from logger import get_logger
 logger = get_logger(__name__)
 
 
@@ -23,7 +23,7 @@ class BinanceWebsocket:
         self.thread.start()
 
     def on_ws_message(self, message: str):
-        # logger.info('Websocket message: {}', message)
+        # logger.info(f'Websocket message: {message}')
         message_parsed = json.loads(message)
         symbol, stream = message_parsed['stream'].split('@')
         if stream == 'depth20':
@@ -35,14 +35,14 @@ class BinanceWebsocket:
             )
 
     def on_ws_error(self, error=None):
-        logger.info('Websocket error: {}, websocket symbols: {}', error, self.symbols)
+        logger.info(f'Websocket error: {error}, websocket symbols: {self.symbols}')
 
     def on_ws_close(self):
-        logger.info('Websocket closed: {}', self.symbols)
+        logger.info(f'Websocket closed: {self.symbols}')
         dispatcher.send(signal='ws_closed', sender=self)
 
     def on_ws_open(self):
-        logger.info('Websocket open: {}', self.symbols)
+        logger.info(f'Websocket open: {self.symbols}')
 
     def run(self):
         logger.info('BinanceWebsocket starting...')
@@ -65,7 +65,7 @@ class BinanceWebsocket:
 
 
 def test_on_ws_depth(sender, symbol: str, data: dict):
-    logger.info('Symbol: {}. Data: {}', symbol, data)
+    logger.info(f'Symbol: {symbol}. Data: {data}')
 
 
 def test_on_websocket_disconnected(sender):

@@ -4,7 +4,7 @@ from binance_api import BinanceApi
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from binance_actions_executor import BinanceActionsExecutor, BinanceSingleAction
 from PyQt5.QtCore import QCoreApplication, QObject
-from custom_logging import get_logger
+from logger import get_logger
 logger = get_logger(__name__)
 
 

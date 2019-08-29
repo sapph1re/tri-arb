@@ -3,7 +3,7 @@ from itertools import combinations, product
 
 from binance_api import BinanceApi, BinanceSymbolInfo
 from config import API_KEY, API_SECRET
-from custom_logging import get_logger
+from logger import get_logger
 
 logger = get_logger(__name__)
 

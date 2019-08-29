@@ -2,7 +2,7 @@ import json
 from decimal import Decimal
 from PyQt5.QtCore import QTimer, QObject, pyqtSlot
 from binance_api import BinanceApi
-from custom_logging import get_logger
+from logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -63,9 +63,9 @@ class BinanceAccountInfo(QObject):
             json_data = json.loads(response)
             self.__parse_info_json(json_data)
         except json.JSONDecodeError:
-            logger.error('BAI > JSON Decode FAILED: {}', str(response))
+            logger.error(f'BAI > JSON Decode FAILED: {response}')
         except BaseException as e:
-            logger.exception('BAI > parse_info(): Unknown EXCEPTION: {}', str(e))
+            logger.exception(f'BAI > parse_info(): Unknown EXCEPTION: {e}')
 
     def __parse_info_json(self, json_data):
         try:
@@ -84,15 +84,15 @@ class BinanceAccountInfo(QObject):
                 asset = each['asset']
                 balance = Decimal(each['free'])
                 self.__balances[asset] = balance
-            # logger.debug('BAI > Update OK: {}', str(json_data))
+            # logger.debug(f'BAI > Update OK: {json_data}')
         except KeyError:
-            logger.error('BAI > __parse_info_json() KeyError: Wrong data format! Data: {}', json_data)
+            logger.error(f'BAI > __parse_info_json() KeyError: Wrong data format! Data: {json_data}')
         except (ValueError, TypeError):
-            logger.error('BAI > Could not parse balance for asset: {}', str(asset))
+            logger.error(f'BAI > Could not parse balance for asset: {asset}')
         except BinanceTradeFeeException as e:
             raise e
         except BaseException as e:
-            logger.exception('BAI > __parse_info_json(): Unknown EXCEPTION: {}', str(e))
+            logger.exception(f'BAI > __parse_info_json(): Unknown EXCEPTION: {e}')
 
 
 def main():

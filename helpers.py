@@ -11,7 +11,7 @@ def catch_exceptions(logger, class_name: str = 'Unknown Class', function_name: s
             try:
                 return fn(*args, **kwargs)
             except BaseException as e:
-                logger.exception('{} > {}(): Unknown EXCEPTION: {}', class_name, function_name, str(e))
+                logger.exception(f'{class_name} > {function_name}(): Unknown EXCEPTION: {e}')
         return inner_wrapper
     return outer_wrapper
 

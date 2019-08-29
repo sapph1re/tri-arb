@@ -4,7 +4,7 @@ from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi
 from arbitrage_detector import ArbitrageDetector
 from PyQt5.QtCore import QCoreApplication
-from custom_logging import get_logger
+from logger import get_logger
 logger = get_logger(__name__)
 
 
@@ -24,7 +24,7 @@ def calculate_counter_amount(amount, price, orderbook):
         if amount_left <= 0:
             break
     if level_price != price:
-        logger.error('Order price {} is not equal to the deepest trade price {}', price, level_price)
+        logger.error(f'Order price {price} is not equal to the deepest trade price {level_price}')
         return None
     return counter_amount
 
@@ -48,21 +48,21 @@ def verify_arbitrage_math(arbitrage):
         min_notional = Decimal(symbols_info[symbol].get_min_notional()).normalize()
         all_good = False
         if action.price < min_price:
-            logger.error('{}: Price {} lower than min_price {}!', symbol, action.price, min_price)
+            logger.error(f'{symbol}: Price {action.price} lower than min_price {min_price}!')
         elif action.price > max_price:
-            logger.error('{}: Price {} greater than max_price {}!', symbol, action.price, max_price)
+            logger.error(f'{symbol}: Price {action.price} greater than max_price {max_price}!')
         elif action.price.quantize(price_step, rounding=ROUND_DOWN) != action.price:
-            logger.error('{}: Price {} precision is higher than price_step {}!', symbol, action.price, price_step)
+            logger.error(f'{symbol}: Price {action.price} precision is higher than price_step {price_step}!')
         elif action.amount < min_amount:
-            logger.error('{}: Amount {} lower than min_amount {}!', symbol, action.amount, min_amount)
+            logger.error(f'{symbol}: Amount {action.amount} lower than min_amount {min_amount}!')
         elif action.amount > max_amount:
-            logger.error('{}: Amount {} greater than max_amount {}!', symbol, action.amount, max_amount)
+            logger.error(f'{symbol}: Amount {action.amount} greater than max_amount {max_amount}!')
         elif action.amount.quantize(amount_step, rounding=ROUND_DOWN) != action.amount:
-            logger.error('{}: Price {} precision is higher than price_step {}!', symbol, action.amount, amount_step)
+            logger.error(f'{symbol}: Price {action.amount} precision is higher than price_step {amount_step}!')
         elif action.amount * action.price < min_notional:
             logger.error(
-                '{}: Amount * price is less than min_notional! {} * {} < {}!',
-                symbol, action.amount, action.price, min_notional
+                f'{symbol}: Amount * price is less than min_notional! '
+                f'{action.amount} * {action.price} < {min_notional}!'
             )
         else:
             all_good = True
@@ -90,29 +90,29 @@ def verify_arbitrage_math(arbitrage):
         # checking final profits
         for currency, profit in profits.items():
             if profit < 0:
-                logger.error('Profit {} is negative: {}', currency, profit)
+                logger.error(f'Profit {currency} is negative: {profit}')
                 check_failed = True
             if currency == arbitrage.currency_x:
                 if arbitrage.profit_x != profit:
-                    logger.error('Profit {} calculated wrong: reported {} vs real {}!', currency, arbitrage.profit_x, profit)
+                    logger.error(f'Profit {currency} calculated wrong: reported {arbitrage.profit_x} vs real {profit}!')
                     check_failed = True
             if currency == arbitrage.currency_y:
                 if arbitrage.profit_y != profit:
-                    logger.error('Profit {} calculated wrong: reported {} vs real {}!', currency, arbitrage.profit_y, profit)
+                    logger.error(f'Profit {currency} calculated wrong: reported {arbitrage.profit_y} vs real {profit}!')
                     check_failed = True
             if currency == arbitrage.currency_z:
                 if arbitrage.profit_z != profit:
-                    logger.error('Profit {} calculated wrong: reported {} vs real {}!', currency, arbitrage.profit_z, profit)
+                    logger.error(f'Profit {currency} calculated wrong: reported {arbitrage.profit_z} vs real {profit}!')
                     check_failed = True
                 profit_rel = profit / z_spend
                 if arbitrage.profit_z_rel != profit_rel:
-                    logger.error('Profit calculated wrong: reported {}% vs real {}!', arbitrage.profit_z_rel*100, profit_rel*100)
+                    logger.error(f'Profit calculated wrong: reported {arbitrage.profit_z_rel*100}% vs real {profit_rel*100}!')
                     check_failed = True
                 if profit_rel < MIN_PROFIT:
-                    logger.error('Profit {}% is less than min_profit {}%', profit_rel*100, MIN_PROFIT*100)
+                    logger.error(f'Profit {profit_rel*100}% is less than min_profit {MIN_PROFIT*100}%')
                     check_failed = True
     if check_failed:
-        logger.info('Arbitrage: {}. Orderbooks: {}', arbitrage, arbitrage.orderbooks)
+        logger.info(f'Arbitrage: {arbitrage}. Orderbooks: {arbitrage.orderbooks}')
     else:
         logger.info('Arbitrage OK')
 
@@ -122,7 +122,7 @@ if __name__ == '__main__':
     app = QCoreApplication(sys.argv)
     api = BinanceApi(API_KEY, API_SECRET)
     symbols_info = api.get_symbols_info()
-    logger.debug('All Symbols Info: {}', symbols_info)
+    logger.debug(f'All Symbols Info: {symbols_info}')
     detector = ArbitrageDetector(
         api=api,
         symbols_info=symbols_info,

@@ -6,7 +6,7 @@ from decimal import Decimal
 from pydispatch import dispatcher
 from binance_api import BinanceApi
 from binance_websocket import BinanceWebsocket
-from custom_logging import get_logger
+from logger import get_logger
 logger = get_logger(__name__)
 
 
@@ -130,7 +130,7 @@ class BinanceOrderbook:
 
 
 def test_on_orderbook_changed(sender: BinanceOrderbook, symbol: str):
-    logger.info('Orderbook changed: {}, last update ID: {}', symbol, sender.get_update_id())
+    logger.info(f'Orderbook changed: {symbol}, last update ID: {sender.get_update_id()}')
 
 
 async def main():

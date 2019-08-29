@@ -2,7 +2,7 @@ import asyncio
 from typing import List, Dict
 from binance import AsyncClient
 from binance.exceptions import BinanceAPIException
-from custom_logging import get_logger
+from logger import get_logger
 
 
 logger = get_logger(__name__)
