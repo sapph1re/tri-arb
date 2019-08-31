@@ -1,42 +1,7 @@
 import time
 import asyncio
-from threading import Thread
-from concurrent.futures import Future
+import threading
 from pydispatch import dispatcher, robustapply
-
-
-def catch_exceptions(logger, class_name: str = 'Unknown Class', function_name: str = 'Unknown Function'):
-    def outer_wrapper(fn):
-        def inner_wrapper(*args, **kwargs):
-            try:
-                return fn(*args, **kwargs)
-            except BaseException as e:
-                logger.exception(f'{class_name} > {function_name}(): Unknown EXCEPTION: {e}')
-        return inner_wrapper
-    return outer_wrapper
-
-
-def safe_cast(val, to_type, default=None):
-    try:
-        return to_type(val)
-    except (ValueError, TypeError):
-        return default
-
-
-def _call_with_future(fn, future, args, kwargs):
-    try:
-        result = fn(*args, **kwargs)
-        future.set_result(result)
-    except Exception as e:
-        future.set_exception(e)
-
-
-def threaded(fn):
-    def wrapper(*args, **kwargs):
-        future = Future()
-        Thread(target=_call_with_future, args=(fn, future, args, kwargs)).start()
-        return future
-    return wrapper
 
 
 def timing(fn):
@@ -82,3 +47,30 @@ def dispatcher_connect_threadsafe(handler, signal, sender) -> callable:
     def disconnect():
         dispatcher.disconnect(dispatcher_receive, signal=signal, sender=sender, weak=False)
     return disconnect
+
+
+def run_async_repeatedly(func, interval, loop, thread_name=None, *args, **kwargs):
+    """
+    In a new thread executes an async func() every <interval> seconds
+    if func() execution takes more than <interval> seconds it will repeat right after the previous execution completes
+    :param func: function to execute repeatedly
+    :param loop: event loop in which the func will be run
+    :param interval: number of seconds between executions
+    :param thread_name: name of the thread to be created (useful for logging)
+    :param args: arbitrary arguments passed to func()
+    :param kwargs: arbitrary keyword arguments passed to func()
+    :return: threading.Event, when you .set() it, execution stops
+    """
+    def _run(stop_event):
+        while not stop_event.is_set():
+            last_time = time.time()
+            asyncio.run_coroutine_threadsafe(func(*args, **kwargs), loop).result()
+            time_passed = time.time() - last_time
+            if time_passed < interval:
+                time.sleep(interval - time_passed)
+
+    stop = threading.Event()
+    thread = threading.Thread(target=_run, args=(stop,), name=thread_name)
+    thread.setDaemon(True)
+    thread.start()
+    return stop

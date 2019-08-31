@@ -1,7 +1,7 @@
-import json
+import asyncio
 from decimal import Decimal
-from PyQt5.QtCore import QTimer, QObject, pyqtSlot
 from binance_api import BinanceApi
+from helpers import run_async_repeatedly
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -11,102 +11,84 @@ class BinanceTradeFeeException(AttributeError):
     pass
 
 
-class BinanceAccountInfo(QObject):
-    def __init__(self, api: BinanceApi, auto_update_interval: int = 60, parent=None):
-        super(BinanceAccountInfo, self).__init__(parent=parent)
+class BinanceAccountInfo:
+    def __init__(self, api: BinanceApi, auto_update_interval: int = 60):
+        self._api = api
+        self._can_trade = False
+        self._trade_fee = Decimal('0.001')
+        self._balances = {}
+        self._update_stop = run_async_repeatedly(
+            self.update_info,
+            auto_update_interval,
+            asyncio.get_event_loop(),
+            thread_name='Account Info'
+        )
 
-        self.__api = api
-        self.__can_trade = False
-        self.__trade_fee = Decimal('0.001')
-        self.__balances = {}
-
-        self.__timer = QTimer()
-        self.__timer.setInterval(auto_update_interval * 1000)
-        self.__timer.timeout.connect(self.update_info_async)
-
-        self.update_info()
+    @classmethod
+    async def create(cls, *args, **kwargs):
+        self = cls(*args, **kwargs)
+        await self.update_info()
+        return self
 
     def can_trade(self) -> bool:
-        return self.__can_trade
-
-    def set_auto_update_interval(self, auto_update_interval: int):
-        self.__timer.setInterval(auto_update_interval * 1000)
-        self.__timer.start()
+        return self._can_trade
 
     def get_trade_fee(self):
-        return self.__trade_fee
+        return self._trade_fee
 
     def get_all_balances(self) -> dict:
-        return self.__balances
+        return self._balances
 
     def get_balance(self, asset: str) -> Decimal:
         try:
-            return self.__balances[asset]
+            return self._balances[asset]
         except KeyError:
             return Decimal('0')
 
-    def update_info(self):
-        self.__timer.start()
-        json_data = self.__api.account()
-        self.__parse_info_json(json_data)
+    async def update_info(self):
+        info = await self._api.account()
+        self._process_info(info)
 
-    @pyqtSlot()
-    def update_info_async(self):
-        self.__timer.start()
-        self.__api.account(slot=self.parse_info)
-
-    @pyqtSlot()
-    def parse_info(self):
+    def _process_info(self, info):
         try:
-            reply = self.sender()
-            response = bytes(reply.readAll()).decode("utf-8")
-            json_data = json.loads(response)
-            self.__parse_info_json(json_data)
-        except json.JSONDecodeError:
-            logger.error(f'BAI > JSON Decode FAILED: {response}')
-        except BaseException as e:
-            logger.exception(f'BAI > parse_info(): Unknown EXCEPTION: {e}')
-
-    def __parse_info_json(self, json_data):
-        try:
-            self.__can_trade = json_data['canTrade']
-
-            maker_commission = json_data['makerCommission']
-            taker_commission = json_data['takerCommission']
+            self._can_trade = info['canTrade']
+            maker_commission = info['makerCommission']
+            taker_commission = info['takerCommission']
             if maker_commission == taker_commission:
-                self.__trade_fee = Decimal(maker_commission) / 100 / 100
+                self._trade_fee = Decimal(maker_commission) / 100 / 100
             else:
                 raise BinanceTradeFeeException('Maker and Taker commissions are different! '
                                                'It can cause wrong calculations and profit loss!')
-
-            self.__balances.clear()
-            for each in json_data['balances']:
+            self._balances.clear()
+            for each in info['balances']:
                 asset = each['asset']
                 balance = Decimal(each['free'])
-                self.__balances[asset] = balance
-            # logger.debug(f'BAI > Update OK: {json_data}')
+                self._balances[asset] = balance
+            # logger.info(f'BAI > Update OK: {info}')
         except KeyError:
-            logger.error(f'BAI > __parse_info_json() KeyError: Wrong data format! Data: {json_data}')
+            logger.error(f'BAI > process_info() KeyError: Wrong data format! Data: {info}')
         except (ValueError, TypeError):
             logger.error(f'BAI > Could not parse balance for asset: {asset}')
         except BinanceTradeFeeException as e:
             raise e
         except BaseException as e:
-            logger.exception(f'BAI > __parse_info_json(): Unknown EXCEPTION: {e}')
+            logger.exception(f'BAI > process_info(): Unknown EXCEPTION: {e}')
+
+    def stop(self):
+        self._update_stop.set()
 
 
-def main():
-    import sys
-    from PyQt5.QtCore import QCoreApplication
+async def main():
     from config import API_KEY, API_SECRET
 
-    app = QCoreApplication(sys.argv)
-    api = BinanceApi(API_KEY, API_SECRET)
-    bui = BinanceAccountInfo(api, auto_update_interval=5)
-    QTimer.singleShot(0, lambda: print('Trade fee = {}'.format(bui.get_trade_fee())))
-    QTimer.singleShot(10 * 1000, app.quit)
-    sys.exit(app.exec_())
+    api = await BinanceApi.create(API_KEY, API_SECRET)
+    acc = await BinanceAccountInfo.create(api, auto_update_interval=5)
+
+    print(f'Trade fee: {acc.get_trade_fee()}')
+
+    acc.stop()
 
 
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())

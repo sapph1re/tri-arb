@@ -1,37 +1,44 @@
-import sys
+import asyncio
+from pydispatch import dispatcher
 from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi
+from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from binance_actions_executor import BinanceActionsExecutor, BinanceSingleAction
-from PyQt5.QtCore import QCoreApplication, QObject
 from logger import get_logger
 logger = get_logger(__name__)
 
 
-class TriangularArbitrage(QObject):
-
-    def __init__(self, api: BinanceApi, parent=None):
-        super(TriangularArbitrage, self).__init__(parent)
-        self.__api = api
-        self.__is_processing = False
-        self.__symbols_info = self.__api.get_symbols_info()
-        self.__detector = ArbitrageDetector(
-            api=self.__api,
-            symbols_info=self.__symbols_info,
+class TriangularArbitrage:
+    def __init__(self, api: BinanceApi, account_info: BinanceAccountInfo, symbols_info: dict):
+        self._api = api
+        self._account_info = account_info
+        self._symbols_info = symbols_info
+        self._is_processing = False
+        self._detector = ArbitrageDetector(
+            api=self._api,
+            symbols_info=symbols_info,
             fee=TRADE_FEE,
             min_profit=MIN_PROFIT
         )
-        self.__detector.arbitrage_detected.connect(self.__process_arbitrage)
+        dispatcher.connect(self._process_arbitrage, signal='arbitrage_detected', sender=self._detector)
 
-    def __on_arbitrage_processed(self):
+    @classmethod
+    async def create(cls):
+        api = await BinanceApi.create(API_KEY, API_SECRET)
+        acc = await BinanceAccountInfo.create(api, auto_update_interval=10)
+        symbols_info = await api.get_symbols_info()
+        return cls(api, acc, symbols_info)
+
+    def _on_arbitrage_processed(self, sender):
         logger.info('Arbitrage processed')
-        self.__is_processing = False
+        self._is_processing = False
 
-    def __process_arbitrage(self, arb: Arbitrage):
-        if self.__is_processing:
+    def _process_arbitrage(self, arb: Arbitrage):
+        if self._is_processing:
             return
         else:
-            self.__is_processing = True
+            self._is_processing = True
         actions = []
         for action in arb.actions:
             actions.append(
@@ -44,22 +51,27 @@ class TriangularArbitrage(QObject):
                     timeInForce='GTC'
                 )
             )
-        self.__executor = BinanceActionsExecutor(
-            # api=self.__api,
-            api_key=API_KEY,
-            api_secret=API_SECRET,
-            actions_list=actions,
-            detector=self.__detector,
+        executor = BinanceActionsExecutor(
+            api=self._api,
+            actions=actions,
+            symbols_info=self._symbols_info,
+            account_info=self._account_info,
+            detector=self._detector,
             arbitrage=arb
         )
-        self.__executor.execution_finished.connect(self.__on_arbitrage_processed)
-        self.__executor.start()
+        dispatcher.connect(self._on_arbitrage_processed, signal='execution_finished', sender=executor)
+        asyncio.ensure_future(executor.run())
         logger.info('Arbitrage executor called')
 
 
-if __name__ == '__main__':
+async def main():
     logger.info('Starting...')
-    app = QCoreApplication(sys.argv)
-    api = BinanceApi(API_KEY, API_SECRET)
-    triarb = TriangularArbitrage(api)
-    sys.exit(app.exec_())
+    triarb = await TriangularArbitrage.create()
+
+    while True:
+        await asyncio.sleep(1)
+
+
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())

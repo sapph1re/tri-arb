@@ -15,13 +15,13 @@ class BinanceOrderbook:
         self.__api = api
         self.__base = base.upper()
         self.__quote = quote.upper()
-        self.__symbol = (self.__base + self.__quote).lower()
+        self.__symbol = self.__base + self.__quote
 
         self.__websocket = websocket
         self.__websocket.add_symbol(self.__symbol)
         dispatcher.connect(
             self.on_ws_depth,
-            signal=f'ws_depth_{self.__symbol}',
+            signal=f'ws_depth_{self.__symbol.lower()}',
             sender=self.__websocket
         )
         dispatcher.connect(
@@ -82,7 +82,9 @@ class BinanceOrderbook:
     def update_orderbook(self, snapshot):
         changed = False
         try:
-            changed = self.__update_bids(snapshot['bids']) or self.__update_asks(snapshot['asks'])
+            bids_changed = self.__update_bids(snapshot['bids'])
+            asks_changed = self.__update_asks(snapshot['asks'])
+            changed = bids_changed or asks_changed
             self.__last_update_id = snapshot['lastUpdateId']
         except LookupError:
             logger.warning(f'Orderbook {self.__symbol} failed to update. Snapshot: {snapshot}')

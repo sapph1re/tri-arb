@@ -30,7 +30,7 @@ class BinanceWebsocket:
             dispatcher.send(
                 signal=f'ws_depth_{symbol}',
                 sender=self,
-                symbol=symbol,
+                symbol=symbol.upper(),
                 data=message_parsed['data']
             )
 

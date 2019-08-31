@@ -1,10 +1,11 @@
-import sys
+import asyncio
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
 from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR
 from binance_api import BinanceApi, BinanceSymbolInfo
-from binance_orderbook import BinanceOrderbook, BinanceDepthWebsocket
+from binance_websocket import BinanceWebsocket
+from binance_orderbook import BinanceOrderbook
 from triangles_finder import TrianglesFinder
 from helpers import dispatcher_connect_threadsafe
 from logger import get_logger
@@ -19,7 +20,7 @@ class MarketAction:
         self.amount = amount
 
     def __str__(self):
-        return '{} {} {}/{} @ {}'.format(self.action, self.amount, self.pair[0], self.pair[1], self.price)
+        return f'{self.action} {self.amount} {self.pair[0]}/{self.pair[1]} @ {self.price}'
 
     def __repr__(self):
         return self.__str__()
@@ -52,10 +53,7 @@ class Arbitrage:
         return self.__str__()
 
 
-class ArbitrageDetector(QObject):
-    arbitrage_detected = pyqtSignal(Arbitrage)
-    arbitrage_disappeared = pyqtSignal(str, str)  # e.g. 'ethbtc eosbtc eoseth', 'sell buy sell'
-
+class ArbitrageDetector:
     def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal):
         """
         Launches Arbitrage Detector
@@ -65,7 +63,6 @@ class ArbitrageDetector(QObject):
         :param fee: trade fee on the exchange
         :param min_profit: detect arbitrage with this profit or higher
         """
-        super(ArbitrageDetector, self).__init__()
         self.api = api
         self.fee = fee
         self.min_profit = min_profit
@@ -89,26 +86,24 @@ class ArbitrageDetector(QObject):
             }
 
         # start watching the orderbooks
-        self.threads = []
         self.websockets = []
         i = 999
+        ws = None
         for symbol, details in self.symbols.items():
-            # starting a thread and a websocket per every 50 symbols
+            # starting a websocket per every 50 symbols
             if i >= 50:
-                th = QThread()
-                self.threads.append(th)
-                ws = BinanceDepthWebsocket(thread=th)
+                ws = BinanceWebsocket()
                 self.websockets.append(ws)
                 i = 0
             # starting an orderbook watcher for every symbol
-            ob = BinanceOrderbook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws, thread=th)
-            dispatcher_connect_threadsafe(self.on_orderbook_changed, signal='orderbook_changed', sender=dispatcher.Any)
+            ob = BinanceOrderbook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
             self.orderbooks[symbol] = ob
             i += 1
-        for thread in self.threads:
-            thread.start()
+
+        dispatcher_connect_threadsafe(self.on_orderbook_changed, signal='orderbook_changed', sender=dispatcher.Any)
+
         for ws in self.websockets:
-            ws.connect()
+            ws.start()
 
     @staticmethod
     def _order_symbols_in_triangle(triangle: tuple):
@@ -153,7 +148,7 @@ class ArbitrageDetector(QObject):
 
     def report_arbitrage(self, arbitrage: Arbitrage):
         logger.info(f'Arbitrage found: {arbitrage}')
-        self.arbitrage_detected.emit(arbitrage)
+        dispatcher.send(signal='arbitrage_detected', sender=self, arb=arbitrage)
 
     def calculate_amounts_on_price_level(self, direction: str, yz: tuple, xz: tuple, xy: tuple) -> tuple:
         """
@@ -605,11 +600,11 @@ class ArbitrageDetector(QObject):
                 )
 
         # no arbitrage found
-        # logger.debug('No arbitrage found')
+        # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
             if self.existing_arbitrages[pairs][actions]:
                 self.existing_arbitrages[pairs][actions] = False
-                self.arbitrage_disappeared.emit(pairs, actions)
+                dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
 
     def on_orderbook_changed(self, sender, symbol: str):
@@ -619,14 +614,22 @@ class ArbitrageDetector(QObject):
                 if arbitrage is not None:
                     self.report_arbitrage(arbitrage)
         except KeyError:
+            logger.warning(f'Symbol {symbol} is unknown')
             return
 
 
-if __name__ == '__main__':
+def test_on_arbitrage_detected(sender: ArbitrageDetector, arb: Arbitrage):
+    logger.info(f'Arbitrage detected: {arb}')
+
+
+def test_on_arbitrage_disappeared(sender: ArbitrageDetector, pairs: str, actions: str):
+    logger.info(f'Arbitrage disappeared: {pairs} {actions}')
+
+
+async def main():
     logger.info('Starting...')
-    app = QCoreApplication(sys.argv)
-    api = BinanceApi(API_KEY, API_SECRET)
-    symbols_info = api.get_symbols_info()
+    api = await BinanceApi.create(API_KEY, API_SECRET)
+    symbols_info = await api.get_symbols_info()
     # symbols_info_slice = {}
     # i = 0
     # for symbol, symbol_info in symbols_info.items():
@@ -641,4 +644,14 @@ if __name__ == '__main__':
         fee=TRADE_FEE,
         min_profit=MIN_PROFIT
     )
-    sys.exit(app.exec_())
+
+    dispatcher.connect(test_on_arbitrage_detected, signal='arbitrage_detected', sender=detector)
+    dispatcher.connect(test_on_arbitrage_disappeared, signal='arbitrage_disappeared', sender=detector)
+
+    while True:
+        await asyncio.sleep(1)
+
+
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())

@@ -1,14 +1,15 @@
+import asyncio
 import time
+from typing import Dict
+from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
-from PyQt5.QtCore import QThread, pyqtSignal
 from config import WAIT_ORDER_TO_FILL, TRADE_FEE
-from binance_api import BinanceApi
+from binance_api import BinanceApi, BinanceSymbolInfo, BinanceAPIException
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from logger import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -66,62 +67,44 @@ class BinanceSingleAction:
         return self.__str__()
 
 
-class BinanceActionsExecutor(QThread):
-
-    action_executed = pyqtSignal()
-    execution_finished = pyqtSignal()
-
-    def __init__(self, api_key: str, api_secret: str, actions_list: List[BinanceSingleAction],
-                 detector: ArbitrageDetector, arbitrage: Arbitrage,
-                 account_info: BinanceAccountInfo = None, parent=None):
-        super(BinanceActionsExecutor, self).__init__(parent=parent)
-
-        self.__api_key = api_key
-        self.__api_secret = api_secret
-        self.__api = None  # will be set properly in run() to avoid threading problems
-        self.__actions_list = actions_list
-
-        self.__account_info = account_info
-
-        self.__pretty_str = ''
-        self.__set_pretty_str(actions_list)
-
-        self.__detector = detector
-        self.__arbitrage = arbitrage
+class BinanceActionsExecutor:
+    def __init__(self, api: BinanceApi, actions: List[BinanceSingleAction],
+                 symbols_info: Dict[str, BinanceSymbolInfo], detector: ArbitrageDetector = None,
+                 arbitrage: Arbitrage = None, account_info: BinanceAccountInfo = None):
+        self._api = api
+        self._actions_list = actions
+        self._account_info = account_info
+        self._symbols_info = symbols_info
+        self._detector = detector
+        self._arbitrage = arbitrage
 
     def __str__(self):
-        return self.__pretty_str
-
-    def __set_pretty_str(self, actions_list: List[BinanceSingleAction]):
-        self.__pretty_str = ' -> '.join([action.side + ': ' + action.symbol for action in actions_list])
+        return ' -> '.join([action.side + ': ' + action.symbol for action in self._actions_list])
 
     def get_actions_list(self) -> List[BinanceSingleAction]:
-        return self.__actions_list
+        return self._actions_list
 
     def set_actions_list(self, actions_list: List[BinanceSingleAction]):
-        self.__actions_list = actions_list
-        self.__set_pretty_str(actions_list)
+        self._actions_list = actions_list
 
-    def run(self):
+    async def run(self):
         logger.info('Executor starting...')
-        # init api and account info
-        self.__api = BinanceApi(self.__api_key, self.__api_secret)
-        if self.__account_info is None:
-            self.__account_info = BinanceAccountInfo(self.__api)
-        self.action_executed.connect(self.__account_info.update_info_async)
+        # init account info if it hasn't been passed from above
+        if self._account_info is None:
+            self._account_info = BinanceAccountInfo(self._api)
 
-        actions_list = self.__get_executable_actions_list()
+        actions_list = self._get_executable_action_list()
         logger.info(f'Executable actions list: {actions_list}')
 
         # actions list is required to be exactly 3 actions for now
         actions_length = len(actions_list)
         if actions_length == 0:
             logger.info('Cannot execute those actions')
-            self.execution_finished.emit()
+            dispatcher.send(signal='execution_finished', sender=self)
             return
         if actions_length != 3:
             logger.error(f'Bad actions list: {actions_list}')
-            self.execution_finished.emit()
+            dispatcher.send(signal='execution_finished', sender=self)
             return
 
         # emergency actions in case of any failures
@@ -130,41 +113,39 @@ class BinanceActionsExecutor(QThread):
         for i in range(actions_length):
             action = actions_list[i]
             logger.info(f'Executing action: {action}...')
-            reply_json = self.__try_execute_action(action)
-            # logger.debug(f'Order creation response: {reply_json}')
-
-            if not reply_json or 'error' in reply_json:
+            result = await self._execute_action(action)
+            if not result or 'error' in result:
                 # order creation failed, execute emergency actions
                 logger.error('Action failed! Failed to place an order.')
                 break
             else:
                 # order created, now wait for it to get filled
                 t = time.time()
-                symbol = reply_json['symbol']
-                order_id = reply_json['orderId']
-                status = reply_json['status']
+                symbol = result['symbol']
+                order_id = result['orderId']
+                status = result['status']
                 while status != 'FILLED' and time.time() - t < WAIT_ORDER_TO_FILL:
-                    status = self.__get_order_status(reply_json)
+                    status = await self._get_order_status(result)
                 # possible statuses: NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
                 if status in ['NEW', 'PARTIALLY_FILLED']:
                     # order is not filled, cancel it and execute emergency actions
                     logger.info(f'Action failed! Order is not filled. Cancelling order {order_id} on symbol {symbol}...')
-                    reply_json = self.__api.cancel_order(symbol, order_id)
+                    result = await self._api.cancel_order(symbol, order_id)
                     try:
-                        amount_filled = Decimal(reply_json['executedQty'])
+                        amount_filled = Decimal(result['executedQty'])
                     except KeyError:
-                        if reply_json['msg'] == 'Unknown order sent.':
+                        if result['msg'] == 'Unknown order sent.':
                             logger.warning(f'Order {symbol} {order_id} not found, already completed?')
                         else:
-                            logger.error(f'Order cancellation failed, response: {reply_json}')
+                            logger.error(f'Order cancellation failed, response: {result}')
                         break
                     if amount_filled > 0:
                         logger.info(f'Order has been partially filled: {amount_filled} {action.base}')
                         if i < 2:
                             # emergency: revert partially executed amount
-                            amount_revert = (amount_filled * (1 - TRADE_FEE)).quantize(
-                                self.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
-                            )
+                            qty_filter = self._symbols_info[action.symbol].get_qty_filter()
+                            amount_step = Decimal(qty_filter[2]).normalize()
+                            amount_revert = (amount_filled * (1 - TRADE_FEE)).quantize(amount_step, rounding=ROUND_DOWN)
                             emergency_actions.append(
                                 BinanceSingleAction(
                                     pair=action.pair,
@@ -186,7 +167,7 @@ class BinanceActionsExecutor(QThread):
                 logger.info('Action completed!')
                 continue
         else:
-            self.execution_finished.emit()
+            dispatcher.send(signal='execution_finished', sender=self)
             return
 
         # performing emergency actions
@@ -197,9 +178,9 @@ class BinanceActionsExecutor(QThread):
             # second action failed: revert first action
             action = actions_list[0]
             logger.info(f'Reverting first action: {action}')
-            amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(
-                self.__detector.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
-            )
+            qty_filter = self._symbols_info[action.symbol].get_qty_filter()
+            amount_step = Decimal(qty_filter[2]).normalize()
+            amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(amount_step, rounding=ROUND_DOWN)
             emergency_actions.append(
                 BinanceSingleAction(
                     pair=action.pair,
@@ -222,21 +203,21 @@ class BinanceActionsExecutor(QThread):
             )
 
         for action in emergency_actions:
-            self.__execute_emergency_action(action)
+            await self._execute_emergency_action(action)
 
-        self.execution_finished.emit()
+        dispatcher.send(signal='execution_finished', sender=self)
         logger.info('Executor finished')
 
-    def __execute_emergency_action(self, action):
+    async def _execute_emergency_action(self, action):
         logger.info(f'Executing emergency action: {action}...')
         while 1:
-            reply_json = self.__try_execute_action(action)
+            result = await self._execute_action(action)
             try:
-                status = self.__get_order_status(reply_json)
+                status = await self._get_order_status(result)
             except BinanceActionException:
-                if 'msg' in reply_json and 'insufficient balance' in reply_json['msg']:
+                if 'msg' in result and 'insufficient balance' in result['msg']:
                     # reduce action amount and try again
-                    qty_min, qty_max, qty_step = self.__detector.symbols_info[action.symbol].get_qty_filter()
+                    qty_min, qty_max, qty_step = self._symbols_info[action.symbol].get_qty_filter()
                     action.quantity -= qty_step
                     if action.quantity < qty_min:
                         logger.error('Insufficient balance to execute emergency action')
@@ -244,7 +225,7 @@ class BinanceActionsExecutor(QThread):
                     # try executing the action again with the reduced amount
                     continue
                 else:
-                    logger.error(f'Failed to execute emergency action, server response: {reply_json}')
+                    logger.error(f'Failed to execute emergency action, server response: {result}')
                     return
             else:
                 break
@@ -257,8 +238,8 @@ class BinanceActionsExecutor(QThread):
                 str(status)
             )
 
-    def __get_executable_actions_list(self) -> List[BinanceSingleAction]:
-        actions = self.__actions_list
+    def _get_executable_action_list(self) -> List[BinanceSingleAction]:
+        actions = self._actions_list
         logger.debug(f'Initial actions list: {actions}')
         # actions list is expected to be exactly three items long, in a triangle
         if len(actions) != 3:
@@ -300,7 +281,7 @@ class BinanceActionsExecutor(QThread):
             else:
                 asset = base
                 amount = quantity
-            balance = self.__account_info.get_balance(asset)
+            balance = self._account_info.get_balance(asset)
             logger.debug(f'{asset} balance: {balance:.8f}')
             candidates.append(balance / amount)
         # we will start with the action that has the highest balance/amount proportion
@@ -313,10 +294,13 @@ class BinanceActionsExecutor(QThread):
             dq.rotate(shift)
             actions = list(dq)
         if proportion < 1:
+            if self._detector is None or self._arbitrage is None:
+                logger.info('Action amounts cannot be reduced without a Detector')
+                return []
             # recalculate action amounts to fit in our balance and keep the arbitrage profitable
             logger.debug(f'Reducing the arbitrage by: {proportion}')
-            reduced = self.__detector.reduce_arbitrage(
-                arb=self.__arbitrage,
+            reduced = self._detector.reduce_arbitrage(
+                arb=self._arbitrage,
                 reduce_factor=proportion
             )
             if reduced is None:
@@ -331,37 +315,84 @@ class BinanceActionsExecutor(QThread):
             logger.debug(f'Reduced arbitrage actions list: {actions}')
         return actions
 
-    def __try_execute_action(self, action: BinanceSingleAction):
-        logger.info(f'Executing action: {action}...')
-        return self.__api.create_order(
-            action.symbol,
-            action.side,
-            action.type,
-            action.quantity,
-            action.timeInForce,
-            action.price,
-            action.newClientOrderId
-        )
-
-    def __get_order_status(self, reply_json) -> str or None:
+    async def _execute_action(self, action: BinanceSingleAction):
         try:
-            status = reply_json['status']
+            return await self._api.create_order(
+                action.symbol,
+                action.side,
+                action.type,
+                action.quantity,
+                action.timeInForce,
+                action.price,
+                action.newClientOrderId
+            )
+        except BinanceAPIException as e:
+            logger.error(f'Action failed: {action}. Reason: {e}')
+            return None
+
+    async def _get_order_status(self, order_result) -> str or None:
+        try:
+            status = order_result['status']
         except KeyError:
             raise BinanceActionException
         if status == 'NEW':
-            symbol = reply_json['symbol']
-            order_id = reply_json['orderId']
+            symbol = order_result['symbol']
+            order_id = order_result['orderId']
             # Order statuses in Binance:
             #   NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
-            reply_json = self.__api.order_info(symbol, order_id)
-            if reply_json and 'status' in reply_json:
-                status = reply_json['status']
+            order_result = await self._api.order_info(symbol, order_id)
+            if order_result and 'status' in order_result:
+                status = order_result['status']
         return status
 
 
-def main():
-    pass
+def test_on_execution_finished(sender):
+    logger.info('Actions execution has finished!')
+
+
+async def main():
+    from config import API_KEY, API_SECRET
+
+    # it will try to execute a demonstratory set of actions
+    # they won't give actual profit, it's just to test that it all works
+
+    api = await BinanceApi.create(API_KEY, API_SECRET)
+    acc = await BinanceAccountInfo.create(api, auto_update_interval=10)
+    symbols_info = await api.get_symbols_info()
+    actions = [
+        BinanceSingleAction(
+            pair=('BTC', 'USDT'),
+            side='SELL',
+            quantity=Decimal('0.002'),
+            price=Decimal('5000.0'),
+            order_type='LIMIT',
+            timeInForce='GTC'
+        ),
+        BinanceSingleAction(
+            pair=('ETH', 'USDT'),
+            side='BUY',
+            quantity=Decimal('0.05'),
+            price=Decimal('200'),
+            order_type='LIMIT',
+            timeInForce='GTC'
+        ),
+        BinanceSingleAction(
+            pair=('ETH', 'BTC'),
+            side='SELL',
+            quantity=Decimal('0.05'),
+            price=Decimal('0.01'),
+            order_type='LIMIT',
+            timeInForce='GTC'
+        )
+    ]
+
+    executor = BinanceActionsExecutor(api=api, actions=actions, symbols_info=symbols_info, account_info=acc)
+    dispatcher.connect(test_on_execution_finished, signal='execution_finished', sender=executor)
+    await executor.run()
+
+    await asyncio.sleep(5)
 
 
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
