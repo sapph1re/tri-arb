@@ -25,8 +25,8 @@ class BinanceWebsocket:
     def on_ws_message(self, message: str):
         # logger.info(f'Websocket message: {message}')
         message_parsed = json.loads(message)
-        symbol, stream = message_parsed['stream'].split('@')
-        if stream == 'depth20':
+        symbol, stream = message_parsed['stream'].split('@', 1)
+        if stream == 'depth20@100ms':
             dispatcher.send(
                 signal=f'ws_depth_{symbol}',
                 sender=self,
@@ -47,7 +47,7 @@ class BinanceWebsocket:
     def run(self):
         logger.info('BinanceWebsocket starting...')
         # websocket.enableTrace(True)   # will print detailed connection info
-        streams = '/'.join([f'{symbol.lower()}@depth20' for symbol in self.symbols])
+        streams = '/'.join([f'{symbol.lower()}@depth20@100ms' for symbol in self.symbols])
         wss_url = f'wss://stream.binance.com:9443/stream?streams={streams}'
         self.ws = websocket.WebSocketApp(
             wss_url,
