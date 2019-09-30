@@ -4,7 +4,7 @@ from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
-from binance_actions_executor import BinanceActionsExecutor, BinanceSingleAction
+from action_executor import BinanceActionExecutor, Action
 from logger import get_logger
 logger = get_logger(__name__)
 
@@ -42,16 +42,15 @@ class TriangularArbitrage:
         actions = []
         for action in arb.actions:
             actions.append(
-                BinanceSingleAction(
+                Action(
                     pair=action.pair,
                     side=action.action.upper(),
                     quantity=action.amount,
                     price=action.price,
-                    order_type='LIMIT',
-                    timeInForce='GTC'
+                    order_type='LIMIT'
                 )
             )
-        executor = BinanceActionsExecutor(
+        executor = BinanceActionExecutor(
             api=self._api,
             actions=actions,
             symbols_info=self._symbols_info,

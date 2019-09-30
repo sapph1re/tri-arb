@@ -41,7 +41,6 @@ class BinanceSymbolInfo:
             'status']  # Возможные статусы: PRE_TRADING, TRADING, POST_TRADING, END_OF_DAY, HALT, AUCTION_MATCH, BREAK
         self.__base_asset = json['baseAsset']
         self.__quote_asset = json['quoteAsset']
-        # TODO: make precision values
         self.__order_types = json[
             'orderTypes']  # "LIMIT", "LIMIT_MAKER", "MARKET", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"
         self.__iceberg_allowed = json['icebergAllowed']

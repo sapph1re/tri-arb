@@ -617,6 +617,14 @@ class ArbitrageDetector:
             logger.warning(f'Symbol {symbol} is unknown')
             return
 
+    def get_book_volume_in_front(self, symbol: str, price: Decimal, side: str) -> Decimal:
+        if side == 'BUY':
+            bids = self.orderbooks[symbol].get_bids()
+            return sum([v for p, v in bids if p > price])
+        elif side == 'SELL':
+            asks = self.orderbooks[symbol].get_asks()
+            return sum([v for p, v in asks if p < price])
+
 
 def test_on_arbitrage_detected(sender: ArbitrageDetector, arb: Arbitrage):
     logger.info(f'Arbitrage detected: {arb}')
