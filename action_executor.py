@@ -370,22 +370,24 @@ class BinanceActionExecutor:
         side = order_result['side']
         if status in ['NEW', 'PARTIALLY_FILLED']:
             # keep checking until it gets filled or lost in the book
-            while status != 'FILLED':
+            while 1:
                 order_result = await self._api.order_info(symbol, order_id)
                 try:
                     status = order_result['status']
                 except (TypeError, KeyError):
                     logger.warning(f'Checking placed order status failed: {order_result}')
+                if status == 'FILLED':
+                    break
                 # give up if the order is lost in the book
                 amount_left = Decimal(order_result['origQty']) - Decimal(order_result['executedQty'])
-                vol_in_front = self._detector.get_book_volume_in_front(symbol, price, side)
-                logger.info(f'Amount left: {amount_left:f}, volume in front: {vol_in_front:f}')
-                rel_in_front = vol_in_front / amount_left
-                if rel_in_front >= 1:
-                    logger.info(
-                        f'Order is lost in the book: {int(rel_in_front*100)}% of unfilled amount'
-                        f' is already in front of the order')
-                    break
+                if amount_left > 0:
+                    vol_in_front = self._detector.get_book_volume_in_front(symbol, price, side)
+                    rel_in_front = vol_in_front / amount_left
+                    if rel_in_front >= 1:
+                        logger.info(
+                            f'Order is lost in the book: {int(rel_in_front*100)}% of unfilled amount'
+                            f' is already in front of the order')
+                        break
                 await asyncio.sleep(CHECK_ORDER_INTERVAL)
         return order_result
 
