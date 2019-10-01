@@ -388,8 +388,10 @@ class BinanceActionExecutor:
                     rel_in_front = vol_in_front / amount_left
                     if rel_in_front >= 1:
                         logger.info(
-                            f'Order is lost in the book: {int(rel_in_front*100)}% of unfilled amount'
-                            f' is already in front of the order')
+                            f'Order {symbol}:{order_id} is lost in the book: '
+                            f'{int(rel_in_front*100)}% of unfilled amount'
+                            f' is already in front of the order'
+                        )
                         break
                 await asyncio.sleep(CHECK_ORDER_INTERVAL)
         return order_result
@@ -476,9 +478,17 @@ class BinanceActionExecutor:
             amount_step = Decimal(qty_filter[2]).normalize()
             amount_to_finalize = (action.quantity - amount_filled).quantize(amount_step, rounding=ROUND_DOWN)
             logger.info(
-                f'Order has been filled for {amount_filled:f} {action.base},'
+                f'Order has been filled for {amount_filled:f} {action.base}, '
                 f'to be finalized: {amount_to_finalize:f} {action.base}'
             )
+            return [
+                Action(
+                    pair=action.pair,
+                    side=action.side,
+                    quantity=amount_to_finalize,
+                    order_type='MARKET'
+                )
+            ]
         return []
 
 
