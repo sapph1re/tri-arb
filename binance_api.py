@@ -245,8 +245,8 @@ class BinanceApi:
             'type': order_type.upper(),
             'quantity': quantity
         }
-        if time_in_force and order_type.upper() != 'MARKET':
-            kwargs['timeInForce'] = time_in_force
+        if order_type.upper() != 'MARKET':
+            kwargs['timeInForce'] = time_in_force if time_in_force is not None else 'GTC'
         if price:
             kwargs['price'] = price
         if new_client_order_id:

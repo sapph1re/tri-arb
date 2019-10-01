@@ -31,7 +31,7 @@ class Action:
     def __str__(self):
         s = f'{self.type} {self.side} {self.quantity} {self.base}/{self.quote}'
         if self.type != 'MARKET':
-            s += f'@ {self.price}'
+            s += f' @ {self.price}'
         return s
 
     def __repr__(self):
@@ -48,8 +48,8 @@ class ActionSet:
     def __str__(self):
         s = []
         for i, actions in enumerate(self.steps):
-            s += f'Step {i}:\n'
-            s += '\n'.join([f'\t{action}' for action in actions])
+            actions_str = '\n'.join([f'\t{action}' for action in actions])
+            s.append(f'Step {i+1}:\n{actions_str}')
         return '\n'.join(s)
 
     def __repr__(self):
@@ -81,7 +81,7 @@ class BinanceActionExecutor:
             logger.info('Cannot execute those actions')
             dispatcher.send(signal='execution_finished', sender=self)
             return
-        logger.info(f'Executable action set: {action_set}')
+        logger.info(f'Executable action set:\n{action_set}')
 
         # emergency actions in case of any failures
         emergency_actions = []
@@ -90,7 +90,7 @@ class BinanceActionExecutor:
         for step, actions in enumerate(action_set.steps):
             # execute all actions of each step in parallel
             actions_str = '\n'.join([f'\t{action}' for action in actions])
-            logger.info(f'Step {step}/{len(action_set.steps)}. Executing actions:\n{actions_str}')
+            logger.info(f'Step {step+1}/{len(action_set.steps)}. Executing actions:\n{actions_str}')
             results = await asyncio.gather(*[self._execute_action(action) for action in actions])
             # check whether the orders were placed successfully
             failed = []
@@ -109,19 +109,20 @@ class BinanceActionExecutor:
                 logger.info('All actions at this step have failed')
                 if step == 0:
                     logger.info('Aborting')
-                    break
                 elif step == 1 and len(action_set.steps) == 3:
                     logger.info('Step 1 will be reverted')
                     emergency_actions.append(self._revert_action(action_set.steps[0][0]))
                 else:
                     logger.info('Last step failed, it will be finalized')
                     emergency_actions.append(self._finalize_action(actions[failed[0]]))
+                break
             elif len(failed) == 1 and len(actions) == 2:
                 # 1 of 2 failed
                 logger.info('1 of 2 parallel actions has failed, cancelling and reverting the other one')
                 emergency_actions.extend(
                     await self._cancel_and_revert(results[placed[0]], actions[placed[0]])
                 )
+                break
             elif len(failed) == 1 and len(actions) == 3:
                 # 1 of 3 failed
                 logger.info('1 of 3 parallel actions has failed, we will wait for the results of the other two')
@@ -173,6 +174,7 @@ class BinanceActionExecutor:
                     logger.info('Last step failed, it will be finalized')
                     for idx in unfilled:
                         emergency_actions.extend(await self._cancel_and_finalize(results[idx], actions[idx]))
+                break
             elif len(filled) == 1 and len(actions) > 1:
                 logger.info(f'1/{len(actions)} actions got filled, cancelling and reverting...')
                 # cancel & revert the unfilled ones
@@ -180,6 +182,7 @@ class BinanceActionExecutor:
                     emergency_actions.extend(await self._cancel_and_revert(results[idx], actions[idx]))
                 # and revert the filled one
                 emergency_actions.append(self._revert_action(actions[filled[0]]))
+                break
             elif len(filled) == 2 and len(actions) == 3:
                 logger.info(f'2/3 actions got filled, the last action will be finalized')
                 if len(unfilled) > 0:
@@ -309,7 +312,7 @@ class BinanceActionExecutor:
     def _reduce_actions_by_proportion(self, actions: List[Action], proportion: Decimal) -> List[Action] or None:
         if proportion < 1:
             if self._detector is None or self._arbitrage is None:
-                logger.info('Action amounts cannot be reduced without a Detector')
+                logger.warning('Action amounts cannot be reduced without a Detector')
                 return None
             # recalculate action amounts to fit in our balance and keep the arbitrage profitable
             logger.debug(f'Reducing the arbitrage by: {proportion}')
@@ -318,7 +321,7 @@ class BinanceActionExecutor:
                 reduce_factor=proportion
             )
             if reduced is None:
-                logger.info('Arbitrage is not available with reduced amounts')
+                logger.debug('Arbitrage is not available with reduced amounts')
                 return None
             # extract amounts from the reduced arbitrage
             for action in actions:
@@ -363,7 +366,7 @@ class BinanceActionExecutor:
         symbol = order_result['symbol']
         order_id = order_result['orderId']
         status = order_result['status']
-        price = order_result['price']
+        price = Decimal(order_result['price'])
         side = order_result['side']
         if status in ['NEW', 'PARTIALLY_FILLED']:
             # keep checking until it gets filled or lost in the book
@@ -376,10 +379,11 @@ class BinanceActionExecutor:
                 # give up if the order is lost in the book
                 amount_left = Decimal(order_result['origQty']) - Decimal(order_result['executedQty'])
                 vol_in_front = self._detector.get_book_volume_in_front(symbol, price, side)
+                logger.info(f'Amount left: {amount_left:f}, volume in front: {vol_in_front:f}')
                 rel_in_front = vol_in_front / amount_left
                 if rel_in_front >= 1:
                     logger.info(
-                        f'Order is lost in the book: {rel_in_front*100}% of unfilled amount'
+                        f'Order is lost in the book: {int(rel_in_front*100)}% of unfilled amount'
                         f' is already in front of the order')
                     break
                 await asyncio.sleep(CHECK_ORDER_INTERVAL)
@@ -414,7 +418,7 @@ class BinanceActionExecutor:
             amount_filled = 0
             try:
                 amount_filled = Decimal(cancel_result['executedQty'])
-                logger.info(f'Order cancelled! Executed amount: {amount_filled}')
+                logger.info(f'Order cancelled! Executed amount: {amount_filled:f}')
             except KeyError:
                 if cancel_result['msg'] == 'Unknown order sent.':
                     logger.info(f'Order {symbol} {order_id} not found, already completed?')
@@ -442,7 +446,7 @@ class BinanceActionExecutor:
         amount_filled = await self._cancel_order(order_result)
         # revert what's been filled
         if amount_filled > 0:
-            logger.info(f'Order has been filled for {amount_filled} {action.base}, it will be reverted')
+            logger.info(f'Order has been filled for {amount_filled:f} {action.base}, it will be reverted')
             qty_filter = self._symbols_info[action.symbol].get_qty_filter()
             amount_step = Decimal(qty_filter[2]).normalize()
             amount_revert = (amount_filled * (1 - TRADE_FEE)).quantize(amount_step, rounding=ROUND_DOWN)
@@ -467,8 +471,8 @@ class BinanceActionExecutor:
             amount_step = Decimal(qty_filter[2]).normalize()
             amount_to_finalize = (action.quantity - amount_filled).quantize(amount_step, rounding=ROUND_DOWN)
             logger.info(
-                f'Order has been filled for {amount_filled} {action.base},'
-                f'to be finalized: {amount_to_finalize} {action.base}'
+                f'Order has been filled for {amount_filled:f} {action.base},'
+                f'to be finalized: {amount_to_finalize:f} {action.base}'
             )
         return []
 

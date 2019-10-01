@@ -443,6 +443,8 @@ class ArbitrageDetector:
             'xz': self.orderbooks[xz].get_asks(),
             'xy': self.orderbooks[xy].get_asks()
         }
+        if min(len(bids['yz']), len(bids['xz']), len(bids['xy']), len(asks['yz']), len(asks['xz']), len(asks['xy'])) == 0:
+            return None
         bids_saved = {'yz': bids['yz'].copy(), 'xz': bids['xz'].copy(), 'xy': bids['xy'].copy()}
         asks_saved = {'yz': asks['yz'].copy(), 'xz': asks['xz'].copy(), 'xy': asks['xy'].copy()}
         # checking that orderbooks are not empty
