@@ -378,6 +378,9 @@ class BinanceActionExecutor:
                     logger.warning(f'Checking placed order status failed: {order_result}')
                 if status == 'FILLED':
                     break
+                elif status not in ['NEW', 'PARTIALLY_FILLED']:
+                    logger.error(f'Unexpected order status: {status}')
+                    break
                 # give up if the order is lost in the book
                 amount_left = Decimal(order_result['origQty']) - Decimal(order_result['executedQty'])
                 if amount_left > 0:
