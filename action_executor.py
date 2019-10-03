@@ -361,6 +361,8 @@ class BinanceActionExecutor:
                     order_result = await self._api.order_info(symbol, order_id)
                 except BinanceAPIException as e:
                     logger.error(f'Failed to get order info, order: {symbol:order_id}, error: {e}')
+                except asyncio.TimeoutError:
+                    logger.error('Getting order info timed out')
                 else:
                     try:
                         status = order_result['status']
