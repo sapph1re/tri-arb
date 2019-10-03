@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
 from config import CHECK_ORDER_INTERVAL, TRADE_FEE
-from binance_api import BinanceApi, BinanceSymbolInfo, BinanceAPIException
+from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from logger import get_logger
@@ -327,7 +327,7 @@ class BinanceActionExecutor:
                 quantity=f'{action.quantity:f}',
                 price=None if action.price is None else f'{action.price:f}',
             )
-        except BinanceAPIException as e:
+        except BinanceApi.Error as e:
             logger.error(f'Action failed: {action}. Reason: {e}')
             return None
 
@@ -359,10 +359,8 @@ class BinanceActionExecutor:
             while 1:
                 try:
                     order_result = await self._api.order_info(symbol, order_id)
-                except BinanceAPIException as e:
+                except BinanceApi.Error as e:
                     logger.error(f'Failed to get order info, order: {symbol:order_id}, error: {e}')
-                except asyncio.TimeoutError:
-                    logger.error('Getting order info timed out')
                 else:
                     try:
                         status = order_result['status']
