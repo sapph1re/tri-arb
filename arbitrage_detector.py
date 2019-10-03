@@ -519,7 +519,7 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
                     self.existing_arbitrages[pairs]['sell buy sell'] = now
-                if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth > self.min_depth:
+                if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
                             MarketAction(triangle[0], 'sell', prices['yz'], normalized['y']),
@@ -597,7 +597,7 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
                     self.existing_arbitrages[pairs]['buy sell buy'] = now
-                if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth > self.min_depth:
+                if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
                             MarketAction(triangle[0], 'buy', prices['yz'], normalized['y']),
