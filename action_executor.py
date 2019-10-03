@@ -152,7 +152,7 @@ class BinanceActionExecutor:
                     logger.info(f'Action partially filled for {exec_amount}: {action}')
                     unfilled.append(idx)
                 elif exec_amount == 0:
-                    logger.info(f'Action not filled')
+                    logger.info(f'Action not filled: {action}')
                     unfilled.append(idx)
 
             # based on how many orders got filled, decide what we do next
@@ -397,10 +397,13 @@ class BinanceActionExecutor:
         return order_result
 
     def _revert_action(self, action: Action) -> Action:
+        qty_filter = self._symbols_info[action.symbol].get_qty_filter()
+        amount_step = Decimal(qty_filter[2]).normalize()
+        amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(amount_step, rounding=ROUND_DOWN)
         return Action(
             pair=action.pair,
             side='BUY' if action.side == 'SELL' else 'SELL',
-            quantity=action.quantity,
+            quantity=amount_revert,
             order_type='MARKET'
         )
 
@@ -425,7 +428,7 @@ class BinanceActionExecutor:
             amount_filled = 0
             try:
                 amount_filled = Decimal(cancel_result['executedQty'])
-                logger.info(f'Order cancelled! Executed amount: {amount_filled:f}')
+                logger.info(f'Order cancelled, executed amount: {amount_filled:f}')
             except KeyError:
                 if cancel_result['msg'] == 'Unknown order sent.':
                     logger.info(f'Order {symbol} {order_id} not found, already completed?')
