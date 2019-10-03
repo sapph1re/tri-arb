@@ -417,7 +417,7 @@ class BinanceActionExecutor:
             # cancel the order
             logger.info(f'Cancelling order {symbol}:{order_id}...')
             cancel_result = await self._api.cancel_order(symbol, order_id)
-            amount_filled = 0
+            amount_filled = Decimal(0)
             try:
                 amount_filled = Decimal(cancel_result['executedQty'])
                 logger.info(f'Order cancelled, executed amount: {amount_filled:f}')
@@ -438,7 +438,7 @@ class BinanceActionExecutor:
                 else:
                     logger.error(f'Order cancellation failed, response: {cancel_result}')
         else:
-            amount_filled = order_result['executedQty']
+            amount_filled = Decimal(order_result['executedQty'])
         return amount_filled
 
     async def _cancel_and_revert(self, order_result: dict, action: Action) -> List[Action]:
