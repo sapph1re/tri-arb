@@ -325,7 +325,7 @@ class BinanceActionExecutor:
                 side=action.side,
                 order_type=action.type,
                 quantity=f'{action.quantity:f}',
-                price=f'{action.price:f}',
+                price=None if action.price is None else f'{action.price:f}',
             )
         except BinanceAPIException as e:
             logger.error(f'Action failed: {action}. Reason: {e}')
