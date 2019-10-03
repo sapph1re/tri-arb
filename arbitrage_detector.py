@@ -494,9 +494,6 @@ class ArbitrageDetector:
                 if not ob[0][1]:
                     del ob[0]
             arb_depth += 1
-        if arb_depth < self.min_depth:
-            # not deep enough
-            prices = None
         if prices is not None:  # potential arbitrage exists
             orderbooks = (bids_saved['yz'], asks_saved['xz'], bids_saved['xy'])
             # make amounts comply with order size requirements
@@ -522,7 +519,7 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
                     self.existing_arbitrages[pairs]['sell buy sell'] = now
-                if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age:
+                if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth > self.min_depth:
                     return Arbitrage(
                         actions=[
                             MarketAction(triangle[0], 'sell', prices['yz'], normalized['y']),
@@ -575,9 +572,6 @@ class ArbitrageDetector:
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
-        if arb_depth < self.min_depth:
-            # not deep enough
-            prices = None
         if prices is not None:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
@@ -603,7 +597,7 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
                     self.existing_arbitrages[pairs]['buy sell buy'] = now
-                if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age:
+                if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth > self.min_depth:
                     return Arbitrage(
                         actions=[
                             MarketAction(triangle[0], 'buy', prices['yz'], normalized['y']),
