@@ -491,7 +491,7 @@ class ArbitrageDetector:
                 if not ob[0][1]:
                     del ob[0]
             arb_depth += 1
-        if arb_depth < MIN_ARBITRAGE_DEPTH:
+        if arb_depth < self.min_depth:
             # not deep enough
             prices = None
         if prices is not None:  # potential arbitrage exists
@@ -569,7 +569,7 @@ class ArbitrageDetector:
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
-        if arb_depth < MIN_ARBITRAGE_DEPTH:
+        if arb_depth < self.min_depth:
             # not deep enough
             prices = None
         if prices is not None:  # potential arbitrage exists
@@ -663,7 +663,8 @@ async def main():
         api=api,
         symbols_info=symbols_info,
         fee=TRADE_FEE,
-        min_profit=MIN_PROFIT
+        min_profit=MIN_PROFIT,
+        min_depth=MIN_ARBITRAGE_DEPTH
     )
 
     dispatcher.connect(test_on_arbitrage_detected, signal='arbitrage_detected', sender=detector)
