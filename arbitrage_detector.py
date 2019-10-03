@@ -2,7 +2,7 @@ import asyncio
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR, MIN_ARBITRAGE_DEPTH
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_websocket import BinanceWebsocket
 from binance_orderbook import BinanceOrderbook
@@ -55,7 +55,7 @@ class Arbitrage:
 
 
 class ArbitrageDetector:
-    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal):
+    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal, min_depth: int):
         """
         Launches Arbitrage Detector
 
@@ -67,6 +67,7 @@ class ArbitrageDetector:
         self.api = api
         self.fee = fee
         self.min_profit = min_profit
+        self.min_depth = min_depth
         self.orderbooks = {}
         self.existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
         self.symbols_info = symbols_info
@@ -461,6 +462,7 @@ class ArbitrageDetector:
         amount_z_spend_total = Decimal(0)
         profit_z_total = Decimal(0)
         prices = None
+        arb_depth = 0
         while 1:
             # check profitability
             profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
@@ -488,6 +490,10 @@ class ArbitrageDetector:
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
+            arb_depth += 1
+        if arb_depth < MIN_ARBITRAGE_DEPTH:
+            # not deep enough
+            prices = None
         if prices is not None:  # potential arbitrage exists
             orderbooks = (bids_saved['yz'], asks_saved['xz'], bids_saved['xy'])
             # make amounts comply with order size requirements
@@ -535,6 +541,7 @@ class ArbitrageDetector:
         amount_z_spend_total = Decimal(0)
         profit_z_total = Decimal(0)
         prices = None
+        arb_depth = 0
         while 1:
             # check profitability
             profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
@@ -562,6 +569,9 @@ class ArbitrageDetector:
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
+        if arb_depth < MIN_ARBITRAGE_DEPTH:
+            # not deep enough
+            prices = None
         if prices is not None:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
