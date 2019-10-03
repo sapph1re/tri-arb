@@ -1,8 +1,9 @@
+import time
 import asyncio
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR, MIN_ARBITRAGE_DEPTH
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR, MIN_ARBITRAGE_DEPTH, MIN_ARBITRAGE_AGE
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_websocket import BinanceWebsocket
 from binance_orderbook import BinanceOrderbook
@@ -55,7 +56,7 @@ class Arbitrage:
 
 
 class ArbitrageDetector:
-    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal, min_depth: int):
+    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal, min_depth: int, min_age: int):
         """
         Launches Arbitrage Detector
 
@@ -68,7 +69,9 @@ class ArbitrageDetector:
         self.fee = fee
         self.min_profit = min_profit
         self.min_depth = min_depth
+        self.min_age = min_age * 1000  # converting to milliseconds
         self.orderbooks = {}
+        # existing arbitrages is a map of millisecond-timestamps of when the arbitrage was found, to then check its age
         self.existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
         self.symbols_info = symbols_info
         self.triangles = TrianglesFinder().make_triangles(symbols_info)
@@ -429,7 +432,7 @@ class ArbitrageDetector:
             self.existing_arbitrages[pairs] = {}
         for actions in ['sell buy sell', 'buy sell buy']:
             if actions not in self.existing_arbitrages[pairs]:
-                self.existing_arbitrages[pairs][actions] = False
+                self.existing_arbitrages[pairs][actions] = 0
         # getting orderbooks
         for symbol in [yz, xz, xy]:
             if not self.orderbooks[symbol].is_valid():
@@ -516,23 +519,26 @@ class ArbitrageDetector:
             )
             # logger.debug(f'Amounts normalized and recalculated: {normalized}')
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
-                self.existing_arbitrages[pairs]['sell buy sell'] = True
-                return Arbitrage(
-                    actions=[
-                        MarketAction(triangle[0], 'sell', prices['yz'], normalized['y']),
-                        MarketAction(triangle[1], 'buy', prices['xz'], normalized['x_buy']),
-                        MarketAction(triangle[2], 'sell', prices['xy'], normalized['x_sell'])
-                    ],
-                    currency_z=currency_z,
-                    amount_z=normalized['z_spend'],
-                    profit_z=normalized['z_profit'],
-                    profit_z_rel=normalized['profit_rel'],
-                    profit_y=normalized['y_profit'],
-                    currency_y=currency_y,
-                    profit_x=normalized['x_profit'],
-                    currency_x=currency_x,
-                    orderbooks=orderbooks
-                )
+                now = int(time.time()*1000)
+                if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
+                    self.existing_arbitrages[pairs]['sell buy sell'] = now
+                if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age:
+                    return Arbitrage(
+                        actions=[
+                            MarketAction(triangle[0], 'sell', prices['yz'], normalized['y']),
+                            MarketAction(triangle[1], 'buy', prices['xz'], normalized['x_buy']),
+                            MarketAction(triangle[2], 'sell', prices['xy'], normalized['x_sell'])
+                        ],
+                        currency_z=currency_z,
+                        amount_z=normalized['z_spend'],
+                        profit_z=normalized['z_profit'],
+                        profit_z_rel=normalized['profit_rel'],
+                        profit_y=normalized['y_profit'],
+                        currency_y=currency_y,
+                        profit_x=normalized['x_profit'],
+                        currency_x=currency_x,
+                        orderbooks=orderbooks
+                    )
 
         # checking triangle in another direction: buy Y/Z, sell X/Z, buy X/Y
         amount_x_buy_total = Decimal(0)
@@ -594,29 +600,32 @@ class ArbitrageDetector:
             )
             # logger.debug(f'Amounts normalized and recalculated: {normalized}')
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
-                self.existing_arbitrages[pairs]['buy sell buy'] = True
-                return Arbitrage(
-                    actions=[
-                        MarketAction(triangle[0], 'buy', prices['yz'], normalized['y']),
-                        MarketAction(triangle[1], 'sell', prices['xz'], normalized['x_sell']),
-                        MarketAction(triangle[2], 'buy', prices['xy'], normalized['x_buy'])
-                    ],
-                    currency_z=currency_z,
-                    amount_z=normalized['z_spend'],
-                    profit_z=normalized['z_profit'],
-                    profit_z_rel=normalized['profit_rel'],
-                    profit_y=normalized['y_profit'],
-                    currency_y=currency_y,
-                    profit_x=normalized['x_profit'],
-                    currency_x=currency_x,
-                    orderbooks=orderbooks
-                )
+                now = int(time.time()*1000)
+                if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
+                    self.existing_arbitrages[pairs]['buy sell buy'] = now
+                if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age:
+                    return Arbitrage(
+                        actions=[
+                            MarketAction(triangle[0], 'buy', prices['yz'], normalized['y']),
+                            MarketAction(triangle[1], 'sell', prices['xz'], normalized['x_sell']),
+                            MarketAction(triangle[2], 'buy', prices['xy'], normalized['x_buy'])
+                        ],
+                        currency_z=currency_z,
+                        amount_z=normalized['z_spend'],
+                        profit_z=normalized['z_profit'],
+                        profit_z_rel=normalized['profit_rel'],
+                        profit_y=normalized['y_profit'],
+                        currency_y=currency_y,
+                        profit_x=normalized['x_profit'],
+                        currency_x=currency_x,
+                        orderbooks=orderbooks
+                    )
 
         # no arbitrage found
         # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
-            if self.existing_arbitrages[pairs][actions]:
-                self.existing_arbitrages[pairs][actions] = False
+            if self.existing_arbitrages[pairs][actions] > 0:
+                self.existing_arbitrages[pairs][actions] = 0
                 dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
 
@@ -664,7 +673,8 @@ async def main():
         symbols_info=symbols_info,
         fee=TRADE_FEE,
         min_profit=MIN_PROFIT,
-        min_depth=MIN_ARBITRAGE_DEPTH
+        min_depth=MIN_ARBITRAGE_DEPTH,
+        min_age=MIN_ARBITRAGE_AGE
     )
 
     dispatcher.connect(test_on_arbitrage_detected, signal='arbitrage_detected', sender=detector)

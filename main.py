@@ -1,6 +1,6 @@
 import asyncio
 from pydispatch import dispatcher
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, MIN_ARBITRAGE_DEPTH
+from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, MIN_ARBITRAGE_DEPTH, MIN_ARBITRAGE_AGE
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
@@ -20,7 +20,8 @@ class TriangularArbitrage:
             symbols_info=symbols_info,
             fee=TRADE_FEE,
             min_profit=MIN_PROFIT,
-            min_depth=MIN_ARBITRAGE_DEPTH
+            min_depth=MIN_ARBITRAGE_DEPTH,
+            min_age=MIN_ARBITRAGE_AGE
         )
         dispatcher.connect(self._process_arbitrage, signal='arbitrage_detected', sender=self._detector)
 
