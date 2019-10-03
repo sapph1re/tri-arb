@@ -1,10 +1,11 @@
+import time
 import asyncio
 from typing import Dict
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
-from config import CHECK_ORDER_INTERVAL, TRADE_FEE
+from config import CHECK_ORDER_INTERVAL, TRADE_FEE, MIN_FILLING_TIME, MIN_FILLING_TIME_LAST_STEP
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
@@ -137,7 +138,10 @@ class BinanceActionExecutor:
             # wait for the orders to get filled
             filled = []
             unfilled = []
-            placed_results = await asyncio.gather(*[self._wait_to_fill(results[idx]) for idx in placed])
+            min_filling_time = MIN_FILLING_TIME_LAST_STEP if step == len(action_set.steps) - 1 else MIN_FILLING_TIME
+            placed_results = await asyncio.gather(
+                *[self._wait_to_fill(results[idx], min_filling_time) for idx in placed]
+            )
             for i, result in enumerate(placed_results):
                 idx = placed[i]
                 # update order results in our main results list
@@ -346,7 +350,7 @@ class BinanceActionExecutor:
                 status = order_result['status']
         return status
 
-    async def _wait_to_fill(self, order_result: dict) -> dict:
+    async def _wait_to_fill(self, order_result: dict, min_filling_time: int) -> dict:
         """Returns amount that got filled, the rest is considered failed to fill"""
 
         symbol = order_result['symbol']
@@ -355,6 +359,7 @@ class BinanceActionExecutor:
         price = Decimal(order_result['price'])
         side = order_result['side']
         if status in ['NEW', 'PARTIALLY_FILLED']:
+            started = time.time()
             # keep checking until it gets filled or lost in the book
             while 1:
                 try:
@@ -371,18 +376,19 @@ class BinanceActionExecutor:
                     elif status not in ['NEW', 'PARTIALLY_FILLED']:
                         logger.error(f'Unexpected order status: {status}')
                         break
-                    # give up if the order is lost in the book
-                    amount_left = Decimal(order_result['origQty']) - Decimal(order_result['executedQty'])
-                    if amount_left > 0:
-                        vol_in_front = self._detector.get_book_volume_in_front(symbol, price, side)
-                        rel_in_front = vol_in_front / amount_left
-                        if rel_in_front >= 1:
-                            logger.info(
-                                f'Order {symbol}:{order_id} is lost in the book: '
-                                f'{int(rel_in_front*100)}% of unfilled amount'
-                                f' is already in front of the order'
-                            )
-                            break
+                    if time.time() - started > min_filling_time:
+                        # give up if the order is lost in the book
+                        amount_left = Decimal(order_result['origQty']) - Decimal(order_result['executedQty'])
+                        if amount_left > 0:
+                            vol_in_front = self._detector.get_book_volume_in_front(symbol, price, side)
+                            rel_in_front = vol_in_front / amount_left
+                            if rel_in_front >= 1:
+                                logger.info(
+                                    f'Order {symbol}:{order_id} is lost in the book: '
+                                    f'{int(rel_in_front*100)}% of unfilled amount'
+                                    f' is already in front of the order'
+                                )
+                                break
                 await asyncio.sleep(CHECK_ORDER_INTERVAL)
         return order_result
 
