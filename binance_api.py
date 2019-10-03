@@ -130,7 +130,7 @@ class BinanceSymbolInfo:
 
 class BinanceApi:
 
-    class Error:
+    class Error(BaseException):
         def __init__(self, message):
             self.message = message
 
