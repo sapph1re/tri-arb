@@ -20,7 +20,7 @@ class MarketAction:
         self.amount = amount
 
     def __str__(self):
-        return f'{self.action} {self.amount} {self.pair[0]}/{self.pair[1]} @ {self.price}'
+        return f'{self.action} {self.amount:f} {self.pair[0]}/{self.pair[1]} @ {self.price:f}'
 
     def __repr__(self):
         return self.__str__()

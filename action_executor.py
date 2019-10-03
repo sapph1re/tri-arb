@@ -201,33 +201,19 @@ class BinanceActionExecutor:
 
     async def _execute_emergency_action(self, action):
         logger.info(f'Executing emergency action: {action}...')
-        while 1:
-            result = await self._execute_action(action)
-            try:
-                status = await self._get_order_status(result)
-            except ActionException:
-                if 'msg' in result and 'insufficient balance' in result['msg']:
-                    # reduce action amount and try again
-                    qty_min, qty_max, qty_step = self._symbols_info[action.symbol].get_qty_filter()
-                    action.quantity -= qty_step
-                    if action.quantity < qty_min:
-                        logger.error('Insufficient balance to execute emergency action')
-                        return
-                    # try executing the action again with the reduced amount
-                    continue
-                else:
-                    logger.error(f'Failed to execute emergency action, server response: {result}')
-                    return
-            else:
-                break
+        result = await self._execute_action(action)
+        if result is None:
+            logger.error('Failed to execute emergency action!')
+            return
+        try:
+            status = await self._get_order_status(result)
+        except ActionException:
+            logger.error(f'Unexpected result of emergency action, server response: {result}')
+            return
         if status == 'FILLED':
-            logger.info('Action completed')
+            logger.info('Emergency action completed')
         else:
-            logger.error(
-                'Emergency action FAILED: {}. Status: {}',
-                action,
-                str(status)
-            )
+            logger.error(f'Emergency action not filled: {action}. Status: {status}')
 
     def _get_executable_action_set(self) -> ActionSet or None:
         actions = self._raw_action_list
