@@ -29,9 +29,9 @@ class Action:
         self.type = order_type.upper()
 
     def __str__(self):
-        s = f'{self.type} {self.side} {self.quantity} {self.base}/{self.quote}'
+        s = f'{self.type} {self.side} {self.quantity:f} {self.base}/{self.quote}'
         if self.type != 'MARKET':
-            s += f' @ {self.price}'
+            s += f' @ {self.price:f}'
         return s
 
     def __repr__(self):
@@ -324,8 +324,8 @@ class BinanceActionExecutor:
                 symbol=action.symbol,
                 side=action.side,
                 order_type=action.type,
-                quantity=action.quantity,
-                price=action.price,
+                quantity=f'{action.quantity:f}',
+                price=f'{action.price:f}',
             )
         except BinanceAPIException as e:
             logger.error(f'Action failed: {action}. Reason: {e}')
