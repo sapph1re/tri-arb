@@ -44,9 +44,10 @@ class Arbitrage:
 
     def __str__(self):
         actions_str = ' -> '.join([str(action) for action in self.actions])
-        return '{}, trade amount: {} {}, profit: +{} {} (+{}%), +{} {}, +{} {}'.format(
-            actions_str, self.amount_z, self.currency_z, self.profit_z, self.currency_z, self.profit_z_rel * 100,
-            self.profit_x, self.currency_x, self.profit_y, self.currency_y
+        return (
+            f'{actions_str}, trade amount: {self.amount_z:f} {self.currency_z}, '
+            f'profit: +{self.profit_z:f} {self.currency_z} (+{self.profit_z_rel*100}%), '
+            f'+{self.profit_x:f} {self.currency_x}, +{self.profit_y:f} {self.currency_y}'
         )
 
     def __repr__(self):
