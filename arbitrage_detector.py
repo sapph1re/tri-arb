@@ -448,8 +448,6 @@ class ArbitrageDetector:
             'xz': self.orderbooks[xz].get_asks(),
             'xy': self.orderbooks[xy].get_asks()
         }
-        if min(len(bids['yz']), len(bids['xz']), len(bids['xy']), len(asks['yz']), len(asks['xz']), len(asks['xy'])) == 0:
-            return None
         bids_saved = {'yz': bids['yz'].copy(), 'xz': bids['xz'].copy(), 'xy': bids['xy'].copy()}
         asks_saved = {'yz': asks['yz'].copy(), 'xz': asks['xz'].copy(), 'xy': asks['xy'].copy()}
         # checking that orderbooks are not empty
@@ -468,7 +466,11 @@ class ArbitrageDetector:
         arb_depth = 0
         while 1:
             # check profitability
-            profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
+            try:
+                profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
+            except IndexError:
+                # orderbook is too short
+                break
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
@@ -547,7 +549,11 @@ class ArbitrageDetector:
         arb_depth = 0
         while 1:
             # check profitability
-            profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
+            try:
+                profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
+            except IndexError:
+                # orderbook is too short
+                break
             if profit_rel < self.min_profit:
                 break
             # calculate trade amounts available on this level
@@ -572,6 +578,7 @@ class ArbitrageDetector:
                     raise Exception('Critical calculation error')
                 if not ob[0][1]:
                     del ob[0]
+            arb_depth += 1
         if prices is not None:  # potential arbitrage exists
             orderbooks = (asks_saved['yz'], bids_saved['xz'], asks_saved['xy'])
             # make amounts comply with order size requirements
