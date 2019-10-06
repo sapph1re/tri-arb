@@ -621,7 +621,7 @@ class ArbitrageDetector:
                 else:
                     logger.info(
                         f'Repeating arb: {pairs} buy sell buy, '
-                        f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
+                        f'age: {(now - self.existing_arbitrages[pairs]["buy sell buy"])/1000}s'
                     )
                 arb_found['buy sell buy'] = True
                 if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
