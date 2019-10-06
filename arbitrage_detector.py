@@ -521,9 +521,12 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
                     self.existing_arbitrages[pairs]['sell buy sell'] = now
-                    logger.info('New arb')
+                    logger.info(f'New arb: {pairs} sell buy sell')
                 else:
-                    logger.info(f'Repeating arb, age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s')
+                    logger.info(
+                        f'Repeating arb: {pairs} sell buy sell, '
+                        f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
+                    )
                 if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
@@ -607,9 +610,12 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
                     self.existing_arbitrages[pairs]['buy sell buy'] = now
-                    logger.info('New arb')
+                    logger.info(f'New arb: {pairs} buy sell buy')
                 else:
-                    logger.info(f'Repeating arb, age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s')
+                    logger.info(
+                        f'Repeating arb: {pairs} buy sell buy,'
+                        f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
+                    )
                 if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
@@ -632,6 +638,7 @@ class ArbitrageDetector:
         # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
             if self.existing_arbitrages[pairs][actions] > 0:
+                logger.info(f'Arb disappeared: {pairs} {actions}')
                 self.existing_arbitrages[pairs][actions] = 0
                 dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
