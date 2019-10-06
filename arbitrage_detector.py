@@ -456,6 +456,12 @@ class ArbitrageDetector:
                 if not side[pair]:
                     # logger.debug('Orderbooks are empty (not ready yet?)')
                     return None
+
+        arb_found = {
+            'sell buy sell': False,
+            'buy sell buy': False
+        }
+
         # checking triangle in one direction: sell Y/Z, buy X/Z, sell X/Y
         amount_x_buy_total = Decimal(0)
         amount_x_sell_total = Decimal(0)
@@ -527,6 +533,7 @@ class ArbitrageDetector:
                         f'Repeating arb: {pairs} sell buy sell, '
                         f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
                     )
+                arb_found['sell buy sell'] = True
                 if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
@@ -616,6 +623,7 @@ class ArbitrageDetector:
                         f'Repeating arb: {pairs} buy sell buy, '
                         f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
                     )
+                arb_found['buy sell buy'] = True
                 if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
@@ -637,7 +645,7 @@ class ArbitrageDetector:
         # no arbitrage found
         # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
-            if self.existing_arbitrages[pairs][actions] > 0:
+            if not arb_found[actions] and self.existing_arbitrages[pairs][actions] > 0:
                 now = int(time.time() * 1000)
                 logger.info(
                     f'Arb disappeared: {pairs} {actions}, '
