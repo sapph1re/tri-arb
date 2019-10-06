@@ -613,7 +613,7 @@ class ArbitrageDetector:
                     logger.info(f'New arb: {pairs} buy sell buy')
                 else:
                     logger.info(
-                        f'Repeating arb: {pairs} buy sell buy,'
+                        f'Repeating arb: {pairs} buy sell buy, '
                         f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
                     )
                 if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
@@ -638,7 +638,11 @@ class ArbitrageDetector:
         # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
             if self.existing_arbitrages[pairs][actions] > 0:
-                logger.info(f'Arb disappeared: {pairs} {actions}')
+                now = int(time.time() * 1000)
+                logger.info(
+                    f'Arb disappeared: {pairs} {actions}, '
+                    f'at age: {(now - self.existing_arbitrages[pairs][actions])/1000}s'
+                )
                 self.existing_arbitrages[pairs][actions] = 0
                 dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
