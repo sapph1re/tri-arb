@@ -521,6 +521,9 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
                     self.existing_arbitrages[pairs]['sell buy sell'] = now
+                    logger.info('New arb')
+                else:
+                    logger.info(f'Repeating arb, age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s')
                 if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
@@ -604,6 +607,9 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
                     self.existing_arbitrages[pairs]['buy sell buy'] = now
+                    logger.info('New arb')
+                else:
+                    logger.info(f'Repeating arb, age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s')
                 if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
                         actions=[
