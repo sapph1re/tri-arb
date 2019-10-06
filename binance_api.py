@@ -505,8 +505,8 @@ async def main():
     for func in funcs:
         try:
             result = await func
-        except BinanceAPIException as e:
-            result = str(e)
+        except BinanceApi.Error as e:
+            result = e.message
         print(f'{func.__name__}():\t{result}')
 
 

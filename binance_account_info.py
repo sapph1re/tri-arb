@@ -1,6 +1,6 @@
 import asyncio
 from decimal import Decimal
-from binance_api import BinanceApi, BinanceAPIException
+from binance_api import BinanceApi
 from helpers import run_async_repeatedly
 from logger import get_logger
 
@@ -48,8 +48,8 @@ class BinanceAccountInfo:
     async def update_info(self):
         try:
             info = await self._api.account()
-        except BinanceAPIException as e:
-            logger.error(f'Failed to load account info: {e}')
+        except BinanceApi.Error as e:
+            logger.error(f'Failed to load account info: {e.message}')
             return
         self._process_info(info)
 
