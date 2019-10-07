@@ -527,12 +527,6 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
                     self.existing_arbitrages[pairs]['sell buy sell'] = now
-                    logger.info(f'New arb: {pairs} sell buy sell')
-                else:
-                    logger.info(
-                        f'Repeating arb: {pairs} sell buy sell, '
-                        f'age: {(now - self.existing_arbitrages[pairs]["sell buy sell"])/1000}s'
-                    )
                 arb_found['sell buy sell'] = True
                 if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
@@ -617,12 +611,6 @@ class ArbitrageDetector:
                 now = int(time.time()*1000)
                 if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
                     self.existing_arbitrages[pairs]['buy sell buy'] = now
-                    logger.info(f'New arb: {pairs} buy sell buy')
-                else:
-                    logger.info(
-                        f'Repeating arb: {pairs} buy sell buy, '
-                        f'age: {(now - self.existing_arbitrages[pairs]["buy sell buy"])/1000}s'
-                    )
                 arb_found['buy sell buy'] = True
                 if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
                     return Arbitrage(
