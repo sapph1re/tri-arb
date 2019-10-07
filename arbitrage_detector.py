@@ -152,7 +152,7 @@ class ArbitrageDetector:
         return triangles_verified, symbols
 
     def report_arbitrage(self, arbitrage: Arbitrage):
-        logger.info(f'Arbitrage found: {arbitrage}')
+        # logger.info(f'Arbitrage found: {arbitrage}')
         dispatcher.send(signal='arbitrage_detected', sender=self, arb=arbitrage)
 
     def calculate_amounts_on_price_level(self, direction: str, yz: tuple, xz: tuple, xy: tuple) -> tuple:
@@ -645,7 +645,7 @@ class ArbitrageDetector:
                 if arbitrage is not None:
                     self.report_arbitrage(arbitrage)
         except KeyError:
-            logger.warning(f'Symbol {symbol} is unknown')
+            logger.warning(f'Symbol {symbol} is unknown, known symbols: {", ".join(self.symbols.keys())}')
             return
 
     def get_book_volume_in_front(self, symbol: str, price: Decimal, side: str) -> Decimal:

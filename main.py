@@ -41,6 +41,7 @@ class TriangularArbitrage:
             return
         else:
             self._is_processing = True
+        logger.info(f'Processing arbitrage: {arb}')
         actions = []
         for action in arb.actions:
             actions.append(
