@@ -63,7 +63,6 @@ class TriangularArbitrage:
         )
         dispatcher.connect(self._on_arbitrage_processed, signal='execution_finished', sender=executor)
         asyncio.ensure_future(executor.run())
-        logger.info('Arbitrage executor called')
 
 
 async def main():

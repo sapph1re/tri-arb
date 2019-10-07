@@ -73,7 +73,6 @@ class BinanceActionExecutor:
         return ' -> '.join([action.side + ': ' + action.symbol for action in self._raw_action_list])
 
     async def run(self):
-        logger.info('Executor starting...')
         # init account info if it hasn't been passed from above
         if self._account_info is None:
             self._account_info = BinanceAccountInfo(self._api)
@@ -203,7 +202,6 @@ class BinanceActionExecutor:
             await self._execute_emergency_action(action)
 
         dispatcher.send(signal='execution_finished', sender=self)
-        logger.info('Executor finished')
 
     async def _execute_emergency_action(self, action):
         logger.info(f'Executing emergency action: {action}...')
