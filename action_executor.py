@@ -14,8 +14,9 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-class ActionException(Exception):
-    pass
+class ActionError(Exception):
+    def __init__(self, message):
+        self.message = message
 
 
 class Action:
@@ -211,7 +212,7 @@ class BinanceActionExecutor:
             return
         try:
             status = await self._get_order_status(result)
-        except ActionException:
+        except ActionError:
             logger.error(f'Unexpected result of emergency action, server response: {result}')
             return
         if status == 'FILLED':
@@ -339,13 +340,16 @@ class BinanceActionExecutor:
         try:
             status = order_result['status']
         except KeyError:
-            raise ActionException
+            raise ActionError('Status not found')
         if status == 'NEW':
             symbol = order_result['symbol']
             order_id = order_result['orderId']
             # Order statuses in Binance:
             #   NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
-            order_result = await self._api.order_info(symbol, order_id)
+            try:
+                order_result = await self._api.order_info(symbol, order_id)
+            except BinanceApi.Error as e:
+                raise ActionError(f'Order info failed: {e.message}')
             if order_result and 'status' in order_result:
                 status = order_result['status']
         return status
@@ -420,27 +424,28 @@ class BinanceActionExecutor:
         if status in ['NEW', 'PARTIALLY_FILLED']:
             # cancel the order
             logger.info(f'Cancelling order {symbol}:{order_id}...')
-            cancel_result = await self._api.cancel_order(symbol, order_id)
             amount_filled = Decimal(0)
             try:
-                amount_filled = Decimal(cancel_result['executedQty'])
-                logger.info(f'Order cancelled, executed amount: {amount_filled:f}')
-            except KeyError:
-                if cancel_result['msg'] == 'Unknown order sent.':
+                cancel_result = await self._api.cancel_order(symbol, order_id)
+            except BinanceApi.Error as e:
+                if 'Unknown order sent' in e.message:
                     logger.info(f'Order {symbol} {order_id} not found, already completed?')
                     # check if order is already completed
-                    r = await self._api.order_info(symbol, order_id)
                     try:
-                        status = r['status']
-                    except (TypeError, KeyError):
-                        logger.error(f'Checking failed-to-cancel order status failed: {r}')
+                        r = await self._api.order_info(symbol, order_id)
+                    except BinanceApi.Error as e:
+                        logger.error(f'Checking failed-to-cancel order status failed: {e.message}')
                     else:
+                        status = r['status']
                         if status == 'FILLED':
                             amount_filled = Decimal(r['executedQty'])
                         else:
                             logger.error(f'Unexpected failed-to-cancel order status: {status}')
                 else:
-                    logger.error(f'Order cancellation failed, response: {cancel_result}')
+                    logger.error(f'Order cancellation failed: {e.message}')
+            else:
+                amount_filled = Decimal(cancel_result['executedQty'])
+                logger.info(f'Order cancelled, executed amount: {amount_filled:f}')
         else:
             amount_filled = Decimal(order_result['executedQty'])
         return amount_filled
