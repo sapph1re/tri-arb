@@ -634,11 +634,6 @@ class ArbitrageDetector:
         # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
             if not arb_found[actions] and self.existing_arbitrages[pairs][actions] > 0:
-                now = int(time.time() * 1000)
-                logger.info(
-                    f'Arb disappeared: {pairs} {actions}, '
-                    f'at age: {(now - self.existing_arbitrages[pairs][actions])/1000}s'
-                )
                 self.existing_arbitrages[pairs][actions] = 0
                 dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
