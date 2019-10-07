@@ -104,6 +104,7 @@ class BinanceActionExecutor:
                     logger.error(f'Failed to place an order! Failed action: {action}')
                     failed.append(idx)
                 else:
+                    logger.info(f'Action order placed: {action}')
                     placed.append(idx)
             if len(failed) == 0:
                 logger.info('All actions at this step placed orders successfully')
