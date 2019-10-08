@@ -5,7 +5,7 @@ from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
-from config import CHECK_ORDER_INTERVAL, TRADE_FEE, MIN_FILLING_TIME, MIN_FILLING_TIME_LAST_STEP
+from config import CHECK_ORDER_INTERVAL, TRADE_FEE, MIN_FILLING_TIME, MIN_FILLING_TIME_LAST_STEP, MAX_FILLING_TIME
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
@@ -140,9 +140,8 @@ class BinanceActionExecutor:
             filled = []
             unfilled = []
             min_filling_time = MIN_FILLING_TIME_LAST_STEP if step == len(action_set.steps) - 1 else MIN_FILLING_TIME
-            placed_results = await asyncio.gather(
-                *[self._wait_to_fill(results[idx], min_filling_time) for idx in placed]
-            )
+            placed_results = [results[idx] for idx in placed]
+            placed_results = await self._wait_all_to_fill(placed_results, min_filling_time, MAX_FILLING_TIME)
             for i, result in enumerate(placed_results):
                 idx = placed[i]
                 # update order results in our main results list
@@ -353,7 +352,7 @@ class BinanceActionExecutor:
                 status = order_result['status']
         return status
 
-    async def _wait_to_fill(self, order_result: dict, min_filling_time: int) -> dict:
+    async def _wait_to_fill(self, order_result: dict, min_filling_time: int, max_filling_time: int) -> dict:
         """Returns amount that got filled, the rest is considered failed to fill"""
 
         symbol = order_result['symbol']
@@ -392,8 +391,33 @@ class BinanceActionExecutor:
                                     f' is already in front of the order'
                                 )
                                 break
+                    if time.time() - started > max_filling_time:
+                        logger.info(
+                            f'Max waiting time reached, order filled by '
+                            f'{order_result["executedQty"]} of {order_result["origQty"]}'
+                        )
+                        break
                 await asyncio.sleep(CHECK_ORDER_INTERVAL)
         return order_result
+
+    async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
+        order_results = []
+        # wait to fill each
+        old_results = await asyncio.gather(
+            *[self._wait_to_fill(result, min_filling_time, max_filling_time) for result in old_results]
+        )
+        # check each order's result one more time, as it may have changed after waiting
+        for old_result in old_results:
+            symbol = old_result['symbol']
+            order_id = old_result['orderId']
+            try:
+                new_result = await self._api.order_info(symbol, order_id)
+            except BinanceApi.Error as e:
+                logger.error(f'Failed to get order info, order: {symbol:order_id}, error: {e}')
+                order_results.append(old_result)
+            else:
+                order_results.append(new_result)
+        return order_results
 
     def _revert_action(self, action: Action) -> Action:
         qty_filter = self._symbols_info[action.symbol].get_qty_filter()
