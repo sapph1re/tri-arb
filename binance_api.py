@@ -490,9 +490,12 @@ class BinanceApi:
 
 
 async def main():
-    from config import API_KEY, API_SECRET
+    from config import config
 
-    api = await BinanceApi.create(API_KEY, API_SECRET)
+    api = await BinanceApi.create(
+        config.get('Exchange', 'APIKey'),
+        config.get('Exchange', 'APISecret')
+    )
     funcs = [
         api.time(),
         api.exchange_info(),

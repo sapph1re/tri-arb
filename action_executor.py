@@ -530,12 +530,15 @@ def test_on_execution_finished(sender):
 
 
 async def main():
-    from config import API_KEY, API_SECRET
+    from config import config
 
     # it will try to execute a demonstratory set of actions
     # they won't give actual profit, it's just to test that it all works
 
-    api = await BinanceApi.create(API_KEY, API_SECRET)
+    api = await BinanceApi.create(
+        config.get('Exchange', 'APIKey'),
+        config.get('Exchange', 'APISecret')
+    )
     acc = await BinanceAccountInfo.create(api, auto_update_interval=10)
     symbols_info = await api.get_symbols_info()
     actions = [

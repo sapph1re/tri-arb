@@ -136,9 +136,12 @@ def test_on_orderbook_changed(sender: BinanceOrderbook, symbol: str):
 
 
 async def main():
-    from config import API_KEY, API_SECRET
+    from config import config
 
-    api = await BinanceApi.create(API_KEY, API_SECRET)
+    api = await BinanceApi.create(
+        config.get('Exchange', 'APIKey'),
+        config.get('Exchange', 'APISecret')
+    )
     symbols_dict = await api.get_symbols_info()
     symbols_list = [(v.get_base_asset(), v.get_quote_asset()) for k, v in symbols_dict.items()]
 

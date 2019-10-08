@@ -30,15 +30,6 @@ class BinanceAccountInfo:
         await self.update_info()
         return self
 
-    def can_trade(self) -> bool:
-        return self._can_trade
-
-    def get_trade_fee(self):
-        return self._trade_fee
-
-    def get_all_balances(self) -> dict:
-        return self._balances
-
     def get_balance(self, asset: str) -> Decimal:
         try:
             return self._balances[asset]
@@ -83,12 +74,15 @@ class BinanceAccountInfo:
 
 
 async def main():
-    from config import API_KEY, API_SECRET
+    from config import config
 
-    api = await BinanceApi.create(API_KEY, API_SECRET)
+    api = await BinanceApi.create(
+        config.get('Exchange', 'APIKey'),
+        config.get('Exchange', 'APISecret')
+    )
     acc = await BinanceAccountInfo.create(api, auto_update_interval=5)
 
-    print(f'Trade fee: {acc.get_trade_fee()}')
+    print(f'Balance BTC: {acc.get_balance("BTC")}')
 
     acc.stop()
 
