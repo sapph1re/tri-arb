@@ -642,13 +642,17 @@ class ArbitrageDetector:
 
     def on_orderbook_changed(self, sender, symbol: str):
         try:
-            for triangle in self.symbols[symbol]['triangles']:
+            triangles = self.symbols[symbol]['triangles']
+        except KeyError:
+            if symbol in self.symbols:
+                logger.warning(f'Triangles missing for symbol {symbol}: {self.symbols[symbol]}')
+            else:
+                logger.warning(f'Symbol unknown: {symbol}')
+        else:
+            for triangle in triangles:
                 arbitrage = self.find_arbitrage_in_triangle(triangle)
                 if arbitrage is not None:
                     self.report_arbitrage(arbitrage)
-        except KeyError:
-            logger.warning(f'Symbol {symbol} is unknown, known symbols: {", ".join(self.symbols.keys())}')
-            return
 
     def get_book_volume_in_front(self, symbol: str, price: Decimal, side: str) -> Decimal:
         if side == 'BUY':
