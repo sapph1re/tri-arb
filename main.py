@@ -1,6 +1,6 @@
 import asyncio
 from pydispatch import dispatcher
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, MIN_ARBITRAGE_DEPTH, MIN_ARBITRAGE_AGE
+from config import config
 from binance_api import BinanceApi
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
@@ -18,16 +18,20 @@ class TriangularArbitrage:
         self._detector = ArbitrageDetector(
             api=self._api,
             symbols_info=symbols_info,
-            fee=TRADE_FEE,
-            min_profit=MIN_PROFIT,
-            min_depth=MIN_ARBITRAGE_DEPTH,
-            min_age=MIN_ARBITRAGE_AGE
+            fee=config.getdecimal('Arbitrage', 'TradeFee'),
+            min_profit=config.getdecimal('Arbitrage', 'MinProfit'),
+            min_depth=config.getint('Arbitrage', 'MinArbDepth'),
+            min_age=config.getint('Arbitrage', 'MinArbAge'),
+            reduce_factor=config.getdecimal('Arbitrage', 'AmountReduceFactor')
         )
         dispatcher.connect(self._process_arbitrage, signal='arbitrage_detected', sender=self._detector)
 
     @classmethod
     async def create(cls):
-        api = await BinanceApi.create(API_KEY, API_SECRET)
+        api = await BinanceApi.create(
+            config.get('Exchange', 'APIKey'),
+            config.get('Exchange', 'APISecret')
+        )
         acc = await BinanceAccountInfo.create(api, auto_update_interval=10)
         symbols_info = await api.get_symbols_info()
         return cls(api, acc, symbols_info)

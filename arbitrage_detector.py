@@ -3,7 +3,7 @@ import asyncio
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import API_KEY, API_SECRET, TRADE_FEE, MIN_PROFIT, AMOUNT_REDUCE_FACTOR, MIN_ARBITRAGE_DEPTH, MIN_ARBITRAGE_AGE
+from config import config
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_websocket import BinanceWebsocket
 from binance_orderbook import BinanceOrderbook
@@ -56,7 +56,8 @@ class Arbitrage:
 
 
 class ArbitrageDetector:
-    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal, min_profit: Decimal, min_depth: int, min_age: int):
+    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal,
+                 min_profit: Decimal, min_depth: int, min_age: int, reduce_factor: Decimal):
         """
         Launches Arbitrage Detector
 
@@ -70,6 +71,7 @@ class ArbitrageDetector:
         self.min_profit = min_profit
         self.min_depth = min_depth
         self.min_age = min_age * 1000  # converting to milliseconds
+        self.reduce_factor = reduce_factor
         self.orderbooks = {}
         # existing arbitrages is a map of millisecond-timestamps of when the arbitrage was found, to then check its age
         self.existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
@@ -513,7 +515,7 @@ class ArbitrageDetector:
                 'z_profit': profit_z_total
             }
             # logger.debug(f'Amounts before recalculation: {amounts}')
-            amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
+            amounts = self.limit_amounts(amounts, self.reduce_factor)
             # logger.debug(f'Amounts limited: {amounts}')
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
@@ -597,7 +599,7 @@ class ArbitrageDetector:
                 'z_profit': profit_z_total
             }
             # logger.debug(f'Amounts before recalculation: {amounts}')
-            amounts = self.limit_amounts(amounts, AMOUNT_REDUCE_FACTOR)
+            amounts = self.limit_amounts(amounts, self.reduce_factor)
             # logger.debug(f'Amounts limited: {amounts}')
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
@@ -667,7 +669,10 @@ def test_on_arbitrage_disappeared(sender: ArbitrageDetector, pairs: str, actions
 
 async def main():
     logger.info('Starting...')
-    api = await BinanceApi.create(API_KEY, API_SECRET)
+    api = await BinanceApi.create(
+        config.get('Exchange', 'APIKey'),
+        config.get('Exchange', 'APISecret')
+    )
     symbols_info = await api.get_symbols_info()
     # symbols_info_slice = {}
     # i = 0
@@ -680,10 +685,11 @@ async def main():
     detector = ArbitrageDetector(
         api=api,
         symbols_info=symbols_info,
-        fee=TRADE_FEE,
-        min_profit=MIN_PROFIT,
-        min_depth=MIN_ARBITRAGE_DEPTH,
-        min_age=MIN_ARBITRAGE_AGE
+        fee=config.getdecimal('Arbitrage', 'TradeFee'),
+        min_profit=config.getdecimal('Arbitrage', 'MinProfit'),
+        min_depth=config.getint('Arbitrage', 'MinArbDepth'),
+        min_age=config.getint('Arbitrage', 'MinArbAge'),
+        reduce_factor=config.getdecimal('Arbitrage', 'AmountReduceFactor')
     )
 
     dispatcher.connect(test_on_arbitrage_detected, signal='arbitrage_detected', sender=detector)

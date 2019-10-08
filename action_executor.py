@@ -5,7 +5,7 @@ from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
-from config import CHECK_ORDER_INTERVAL, TRADE_FEE, MIN_FILLING_TIME, MIN_FILLING_TIME_LAST_STEP, MAX_FILLING_TIME
+from config import config
 from binance_api import BinanceApi, BinanceSymbolInfo
 from binance_account_info import BinanceAccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
@@ -68,6 +68,10 @@ class BinanceActionExecutor:
         self._symbols_info = symbols_info
         self._detector = detector
         self._arbitrage = arbitrage
+        self._trade_fee = config.getdecimal('Arbitrage', 'TradeFee')
+        self._min_fill_time = config.getint('Arbitrage', 'MinFillTime')
+        self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast')
+        self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime')
 
     def __str__(self):
         return ' -> '.join([action.side + ': ' + action.symbol for action in self._raw_action_list])
@@ -139,9 +143,9 @@ class BinanceActionExecutor:
             # wait for the orders to get filled
             filled = []
             unfilled = []
-            min_filling_time = MIN_FILLING_TIME_LAST_STEP if step == len(action_set.steps) - 1 else MIN_FILLING_TIME
+            min_filling_time = self._min_fill_time_last if step == len(action_set.steps) - 1 else self._min_fill_time
             placed_results = [results[idx] for idx in placed]
-            placed_results = await self._wait_all_to_fill(placed_results, min_filling_time, MAX_FILLING_TIME)
+            placed_results = await self._wait_all_to_fill(placed_results, min_filling_time, self._max_fill_time)
             for i, result in enumerate(placed_results):
                 idx = placed[i]
                 # update order results in our main results list
@@ -397,7 +401,7 @@ class BinanceActionExecutor:
                             f'{order_result["executedQty"]} of {order_result["origQty"]}'
                         )
                         break
-                await asyncio.sleep(CHECK_ORDER_INTERVAL)
+                await asyncio.sleep(config.getint('Arbitrage', 'CheckOrderInterval'))
         return order_result
 
     async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
@@ -422,7 +426,7 @@ class BinanceActionExecutor:
     def _revert_action(self, action: Action) -> Action:
         qty_filter = self._symbols_info[action.symbol].get_qty_filter()
         amount_step = Decimal(qty_filter[2]).normalize()
-        amount_revert = (action.quantity * (1 - TRADE_FEE)).quantize(amount_step, rounding=ROUND_DOWN)
+        amount_revert = (action.quantity * (1 - self._trade_fee)).quantize(amount_step, rounding=ROUND_DOWN)
         return Action(
             pair=action.pair,
             side='BUY' if action.side == 'SELL' else 'SELL',
@@ -483,7 +487,7 @@ class BinanceActionExecutor:
             logger.info(f'Order has been filled for {amount_filled:f} {action.base}, it will be reverted')
             qty_filter = self._symbols_info[action.symbol].get_qty_filter()
             amount_step = Decimal(qty_filter[2]).normalize()
-            amount_revert = (amount_filled * (1 - TRADE_FEE)).quantize(amount_step, rounding=ROUND_DOWN)
+            amount_revert = (amount_filled * (1 - self._trade_fee)).quantize(amount_step, rounding=ROUND_DOWN)
             return [
                 Action(
                     pair=action.pair,

@@ -1,8 +1,6 @@
 from typing import Dict
 from itertools import combinations, product
-
-from binance_api import BinanceApi, BinanceSymbolInfo
-from config import API_KEY, API_SECRET
+from binance_api import BinanceSymbolInfo
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -258,33 +256,3 @@ class TrianglesFinder:
             a, b = b, a
 
         return a, b, c
-
-
-if __name__ == '__main__':
-    api = BinanceApi(API_KEY, API_SECRET)
-    symbols_info = api.get_symbols_info()
-
-    print('>> Symbols count = {}'.format(len(symbols_info)))
-    print()
-
-    tf = TrianglesFinder()
-    base_dict, quote_dict = tf.make_asset_dicts(symbols_info)
-
-    print('>> Size of base_dict = {}'.format(len(base_dict)))
-    for k, v in base_dict.items():
-        print('{} : {}'.format(k, v))
-    print()
-
-    print('>> Size of quote_dict = {}'.format(len(quote_dict)))
-    for k, v in quote_dict.items():
-        print('{} : {}'.format(k, v))
-    print()
-
-    triangles1 = tf.make_triangles(symbols_info)
-    triangles2 = tf.make_triangles_var2(symbols_info)
-    # triangles3 = tf.make_triangles_var3(symbols_info)
-
-    tf.triangles_verification([triangles1, triangles2])
-
-    ordered_triangles = tf._order_symbols_in_triangles(triangles1)
-    tf.save_triangles_set_to('tri_arb_01.txt', ordered_triangles)
