@@ -1,144 +1,22 @@
 import asyncio
-from typing import List, Dict
-from binance import AsyncClient
-from binance.exceptions import BinanceAPIException
+from typing import List
+from .binance.client import AsyncClient
+from .binance.exceptions import BinanceAPIException
 from logger import get_logger
-
-
 logger = get_logger(__name__)
 
 
-class BinanceSymbolInfo:
-
-    def __init__(self, json: dict):
-        """
-        :return: list of dictionaries with symbols info:
-        {
-            baseAssetPrecision: 8,  #  Как мы заметили, он одинаковый (т.е. равен 8) для всех символов
-            quotePrecision: 8,      #  Как мы заметили, он одинаковый (т.е. равен 8) для всех символов
-            filters: [
-                {
-                    filterType: "PRICE_FILTER",     #  Ограничение цены создаваемого ордера.
-                    minPrice: "0.00000100",         #  Цена ордера должна быть в диапазоне min_price и max_price,
-                    maxPrice: "100000.00000000",    #   и шаг торговли должен быть кратен tickSize.
-                    tickSize: "0.00000100"          #  Да да, тут нельзя ставить ордера с произвольной ценой.
-                },
-                {
-                    filterType: "LOT_SIZE",         #  ограничение объема создаваемого ордера.
-                    minQty: "0.00100000",           #  Объем должен быть в диапазоне minQty и maxQty,
-                    maxQty: "100000.00000000",      #   и быть кратен stepSize.
-                    stepSize: "0.00100000"
-                },
-                {
-                    filterType: "MIN_NOTIONAL",     # Итоговая сумма ордера (объем*цена) должна быть выше minNotional.
-                    minNotional: "0.00100000"
-                }
-            ]
-        }
-        """
-        self.__symbol = json['symbol']
-        self.__status = json[
-            'status']  # Возможные статусы: PRE_TRADING, TRADING, POST_TRADING, END_OF_DAY, HALT, AUCTION_MATCH, BREAK
-        self.__base_asset = json['baseAsset']
-        self.__quote_asset = json['quoteAsset']
-        self.__order_types = json[
-            'orderTypes']  # "LIMIT", "LIMIT_MAKER", "MARKET", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"
-        self.__iceberg_allowed = json['icebergAllowed']
-
-        self.__min_price_filter = None
-        self.__max_price_filter = None
-        self.__price_step_size = None
-        self.__min_qty_filter = None
-        self.__max_qty_filter = None
-        self.__qty_step_size = None
-        self.__min_notional = None
-
-        filters = json['filters']
-        for each in filters:
-            if each['filterType'] == 'PRICE_FILTER':
-                self.__min_price_filter = each['minPrice']
-                self.__max_price_filter = each['maxPrice']
-                self.__price_step_size = each['tickSize']
-            elif each['filterType'] == 'LOT_SIZE':
-                self.__min_qty_filter = each['minQty']
-                self.__max_qty_filter = each['maxQty']
-                self.__qty_step_size = each['stepSize']
-            elif each['filterType'] == 'MIN_NOTIONAL':
-                self.__min_notional = each['minNotional']
-
-    def get_symbol(self):
-        """
-        :return:  symbol (for example 'ETHBTC')
-        """
-        return self.__symbol
-
-    def get_status(self):
-        """
-        Possible statuses: PRE_TRADING, TRADING, POST_TRADING, END_OF_DAY, HALT, AUCTION_MATCH, BREAK
-        :return: One of possible statuses.
-        """
-        return self.__status
-
-    def get_base_asset(self):
-        """
-        :return: base asset (from symbol 'ETHBTC' it returns 'ETH')
-        """
-        return self.__base_asset
-
-    def get_quote_asset(self):
-        """
-        :return: quote asset (from symbol 'ETHBTC' it returns 'BTC')
-        """
-        return self.__quote_asset
-
-    def get_order_types(self):
-        """
-        Possible types: "LIMIT", "LIMIT_MAKER", "MARKET", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"
-        :return: list of available order types for current symbol
-        """
-        return self.__order_types
-
-    def is_iceberg_allowed(self):
-        return self.__iceberg_allowed
-
-    def get_price_filter(self):
-        """
-        Price limit filter:
-        1. minPrice <= yourPrice <= maxPrice
-        2. yourPrice % priceStepSize = 0
-        :return: tuple of 3 elements: minPrice, maxPrice and priceStepSize
-        """
-        return self.__min_price_filter, self.__max_price_filter, self.__price_step_size
-
-    def get_qty_filter(self):
-        """
-        Qty limit filter:
-        1. minQty <= yourQty <= maxQty
-        2. yourQty % qtyStepSize = 0
-        :return: tuple of 3 elements: minQty, maxQty and qtyStepSize
-        """
-        return self.__min_qty_filter, self.__max_qty_filter, self.__qty_step_size
-
-    def get_min_notional(self):
-        """
-        Notional filter:
-        yourPrice * yourQty >= minNotional
-        :return: minNotional
-        """
-        return self.__min_notional
-
-
-class BinanceApi:
+class BinanceAPI:
 
     class Error(BaseException):
         def __init__(self, message):
             self.message = message
 
     def __init__(self, client: AsyncClient):
-        self.client = client
+        self._client = client
 
     @classmethod
-    async def create(cls, api_key, api_secret):
+    async def create(cls, api_key: str, api_secret: str):
         client = await AsyncClient.create(api_key, api_secret)
         return cls(client)
 
@@ -146,9 +24,9 @@ class BinanceApi:
         try:
             return await coro
         except asyncio.TimeoutError:
-            raise BinanceApi.Error('Timed out')
+            raise self.Error('Timed out')
         except BinanceAPIException as e:
-            raise BinanceApi.Error(str(e))
+            raise self.Error(str(e))
 
     async def time(self) -> dict:
         """
@@ -159,7 +37,7 @@ class BinanceApi:
         :return: словарь с текущим временем.
         """
         return await self.safe_call(
-            self.client.get_server_time()
+            self._client.get_server_time()
         )
 
     async def exchange_info(self) -> dict:
@@ -171,7 +49,7 @@ class BinanceApi:
         :return: структура данных в словаре
         """
         return await self.safe_call(
-            self.client.get_exchange_info()
+            self._client.get_exchange_info()
         )
 
     async def depth(self, symbol: str, limit: int = 100) -> dict:
@@ -193,7 +71,7 @@ class BinanceApi:
         :return: значения в словаре
         """
         return await self.safe_call(
-            self.client.get_order_book(symbol=symbol.upper(), limit=limit)
+            self._client.get_order_book(symbol=symbol.upper(), limit=limit)
         )
 
     async def create_order(self, symbol: str, side: str, order_type: str, quantity,
@@ -279,7 +157,7 @@ class BinanceApi:
         if new_order_resp_type:
             kwargs['newOrderRespType'] = new_order_resp_type
         return await self.safe_call(
-            self.client.create_order(**kwargs)
+            self._client.create_order(**kwargs)
         )
 
     async def test_order(self, symbol: str, side: str, order_type: str, quantity,
@@ -343,7 +221,7 @@ class BinanceApi:
         if new_order_resp_type:
             kwargs['newOrderRespType'] = new_order_resp_type
         return await self.safe_call(
-            self.client.create_test_order(**kwargs)
+            self._client.create_test_order(**kwargs)
         )
 
     async def order_info(self, symbol: str, order_id: int = None, orig_client_order_id: str = None,
@@ -374,7 +252,7 @@ class BinanceApi:
         if recv_window:
             kwargs['recvWindow'] = recv_window
         return await self.safe_call(
-            self.client.get_order(**kwargs)
+            self._client.get_order(**kwargs)
         )
 
     async def cancel_order(self, symbol: str, order_id: int = None,
@@ -409,7 +287,7 @@ class BinanceApi:
         if new_client_order_id:
             kwargs['newClientOrderId'] = new_client_order_id
         return await self.safe_call(
-            self.client.cancel_order(**kwargs)
+            self._client.cancel_order(**kwargs)
         )
 
     async def account(self, recv_window: int = None) -> dict:
@@ -431,10 +309,10 @@ class BinanceApi:
         if recv_window:
             kwargs['recvWindow'] = recv_window
         return await self.safe_call(
-            self.client.get_account(**kwargs)
+            self._client.get_account(**kwargs)
         )
 
-    async def get_symbols_info_json(self) -> List[dict]:
+    async def get_symbols_info(self) -> List[dict]:
         """
         :return: list of dictionaries with symbols info:
         {
@@ -479,20 +357,14 @@ class BinanceApi:
         try:
             symbols_info = response_json['symbols']
         except LookupError:
-            return []
+            raise self.Error('Failed to load symbols')
         return symbols_info
-
-    async def get_symbols_info(self) -> Dict[str, BinanceSymbolInfo]:
-        return {
-            each['symbol']: BinanceSymbolInfo(each)
-            for each in await self.get_symbols_info_json()
-        }
 
 
 async def main():
     from config import config
 
-    api = await BinanceApi.create(
+    api = await BinanceAPI.create(
         config.get('Exchange', 'APIKey'),
         config.get('Exchange', 'APISecret')
     )
@@ -508,7 +380,7 @@ async def main():
     for func in funcs:
         try:
             result = await func
-        except BinanceApi.Error as e:
+        except BinanceAPI.Error as e:
             result = e.message
         print(f'{func.__name__}():\t{result}')
 

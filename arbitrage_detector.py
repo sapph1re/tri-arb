@@ -3,11 +3,9 @@ import asyncio
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import Dict, Tuple, List
-from config import config
-from binance_api import BinanceApi, BinanceSymbolInfo
-from binance_websocket import BinanceWebsocket
-from binance_orderbook import BinanceOrderbook
-from triangles_finder import TrianglesFinder
+from itertools import combinations
+from config import config, get_exchange_class
+from exchanges.base_exchange import BaseExchange
 from helpers import dispatcher_connect_threadsafe
 from logger import get_logger
 logger = get_logger(__name__)
@@ -56,61 +54,104 @@ class Arbitrage:
 
 
 class ArbitrageDetector:
-    def __init__(self, api: BinanceApi, symbols_info: Dict[str, BinanceSymbolInfo], fee: Decimal,
-                 min_profit: Decimal, min_depth: int, min_age: int, reduce_factor: Decimal):
+    def __init__(self, exchange: BaseExchange, fee: Decimal, min_profit: Decimal,
+                 min_depth: int, min_age: int, reduce_factor: Decimal):
         """
         Launches Arbitrage Detector
 
-        :param api: BinanceApi instance
-        :param symbols_info: {symbol: BinanceSymbolInfo, ...}
+        :param exchange: instance of the exchange class
         :param fee: trade fee on the exchange
         :param min_profit: detect arbitrage with this profit or higher
+        :param min_depth: report arbitrage with this minimal depth
+        :param min_age: report arbitrage only if it's this old (in seconds)
+        :param reduce_factor: reduce the available arbitrage by this proportion
         """
-        self.api = api
-        self.fee = fee
-        self.min_profit = min_profit
-        self.min_depth = min_depth
-        self.min_age = min_age * 1000  # converting to milliseconds
-        self.reduce_factor = reduce_factor
-        self.orderbooks = {}
+        self._exchange = exchange
+        self._fee = fee
+        self._min_profit = min_profit
+        self._min_depth = min_depth
+        self._min_age = min_age * 1000  # converting to milliseconds
+        self._reduce_factor = reduce_factor
+        self._orderbooks = {}
         # existing arbitrages is a map of millisecond-timestamps of when the arbitrage was found, to then check its age
-        self.existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
-        self.symbols_info = symbols_info
-        self.triangles = TrianglesFinder().make_triangles(symbols_info)
-        self.triangles, self.symbols = self._verify_triangles(self.triangles)
+        self._existing_arbitrages = {}  # {'pair pair pair': {'buy sell buy': ..., 'sell buy sell': ...}}
+
+        symbols_info = self._exchange.get_symbols_info()
+        self._triangles = self._make_triangles(symbols_info)
+        self._triangles, self._symbols = self._verify_triangles(self._triangles)
         # logger.debug(f'Triangles: {self.triangles}')
         # logger.debug(f'Symbols: {self.symbols}')
 
-        # load order amount requirements
-        self.symbols_filters = {}
-        for symbol in self.symbols:
-            qty_filter = self.symbols_info[symbol].get_qty_filter()
-            self.symbols_filters[symbol] = {
-                'min_amount': Decimal(qty_filter[0]).normalize(),
-                'max_amount': Decimal(qty_filter[1]).normalize(),
-                'amount_step': Decimal(qty_filter[2]).normalize(),
-                'min_notional': Decimal(self.symbols_info[symbol].get_min_notional()).normalize()
+        # order amount requirements
+        self._symbol_reqs = {}
+        for symbol, info in symbols_info.items():
+            self._symbol_reqs[symbol] = {
+                'min_amount': info['min_amount'],
+                'max_amount': info['max_amount'],
+                'amount_step': info['amount_step'],
+                'min_total': info['min_total']
             }
 
         # start watching the orderbooks
-        self.websockets = []
-        i = 999
-        ws = None
-        for symbol, details in self.symbols.items():
-            # starting a websocket per every 50 symbols
-            if i >= 50:
-                ws = BinanceWebsocket()
-                self.websockets.append(ws)
-                i = 0
-            # starting an orderbook watcher for every symbol
-            ob = BinanceOrderbook(api=self.api, base=details['base'], quote=details['quote'], websocket=ws)
-            self.orderbooks[symbol] = ob
-            i += 1
-
         dispatcher_connect_threadsafe(self.on_orderbook_changed, signal='orderbook_changed', sender=dispatcher.Any)
+        self._orderbooks = self._exchange.run_orderbooks(self._symbols)
 
-        for ws in self.websockets:
-            ws.start()
+    @staticmethod
+    def _make_asset_dicts(symbols_info: Dict[str, Dict[str, Decimal]]) -> Tuple[dict, dict]:
+        base_dict = {}
+        quote_dict = {}
+        for symbol, info in symbols_info.items():
+            base_asset = info['base_asset']
+            quote_asset = info['quote_asset']
+            if base_asset not in base_dict:
+                base_dict[base_asset] = set()
+            if quote_asset not in quote_dict:
+                quote_dict[quote_asset] = set()
+            base_dict[base_asset].add(symbol)
+            quote_dict[quote_asset].add(symbol)
+        return base_dict, quote_dict
+
+    def _make_triangles(self, symbols_info: Dict[str, Dict[str, Decimal]]) -> set:
+        """
+        Find triangles in a list of symbols
+        :param symbols_info: symbols to work with, format: {'base_asset': str, 'quote_asset': str}}
+        :return: set of tuples of 3 tuples of base and quote assets
+                Example: set{
+                                ((ETH, BTC), (EOS, BTC), (EOS, ETH)),
+                                ((ETH, BTC), (BNB, BTC), (BNB, ETH))
+                            }
+        """
+        base_dict, quote_dict = self._make_asset_dicts(symbols_info)
+        triangles = set()
+
+        for quote, symbols in quote_dict.items():
+            quote_len = len(quote)
+            combs = combinations(symbols, 2)
+
+            for a, b in combs:
+                base1 = a[:-quote_len]
+                base2 = b[:-quote_len]
+                if (base1 not in quote_dict) and (base2 not in quote_dict):
+                    continue
+
+                c1 = base2 + base1
+                c2 = base1 + base2
+
+                if ((base1 in quote_dict) and (base2 in base_dict) and
+                        (c1 in quote_dict[base1]) and (c1 in base_dict[base2])):
+                    triangles.add(
+                        ((base1, quote),
+                         (base2, quote),
+                         (base2, base1))
+                    )
+                elif ((base2 in quote_dict) and (base1 in base_dict) and
+                      (c2 in quote_dict[base2]) and (c2 in base_dict[base1])):
+                    triangles.add(
+                        ((base2, quote),
+                         (base1, quote),
+                         (base1, base2))
+                    )
+        return triangles
 
     @staticmethod
     def _order_symbols_in_triangle(triangle: tuple):
@@ -170,25 +211,25 @@ class ArbitrageDetector:
         amount_x = min(xz[1], xy[1])
         amount_y = amount_x * xy[0]
         amount_x_sell = amount_x  # this much we can sell for sure
-        amount_x_buy = amount_x_sell / (1 - self.fee)  # plus the fee, that's how much X we must buy
+        amount_x_buy = amount_x_sell / (1 - self._fee)  # plus the fee, that's how much X we must buy
         if direction == 'sell buy sell':
             if amount_x_buy > xz[1]:  # if we can't buy enough X on X/Z
                 amount_x_buy = xz[1]  # then we buy as much X as we can on X/Z
-                amount_x_sell = amount_x_buy * (1 - self.fee)  # => minus the fee, that's how much X we can sell on X/Y
-            amount_y = amount_x_sell * xy[0] * (1 - self.fee)  # Y we get from selling X, that we can sell on Y/Z
+                amount_x_sell = amount_x_buy * (1 - self._fee)  # => minus the fee, that's how much X we can sell on X/Y
+            amount_y = amount_x_sell * xy[0] * (1 - self._fee)  # Y we get from selling X, that we can sell on Y/Z
         elif direction == 'buy sell buy':
             if amount_x_buy > xy[1]:  # if we can't buy enough X on X/Y
                 amount_x_buy = xy[1]  # then buy as much X as we can on X/Y
-                amount_x_sell = amount_x_buy * (1 - self.fee)  # => minus the fee, that's how much X we can sell on X/Z
-            amount_y = amount_x_buy * xy[0] / (1 - self.fee)  # Y we spend to buy X, plus the fee, we must buy on Y/Z
+                amount_x_sell = amount_x_buy * (1 - self._fee)  # => minus the fee, that's how much X we can sell on X/Z
+            amount_y = amount_x_buy * xy[0] / (1 - self._fee)  # Y we spend to buy X, plus the fee, we must buy on Y/Z
         if amount_y > yz[1]:  # if we can't trade that much Y on Y/Z
             amount_y = yz[1]  # then trade as much Y as we can on Y/Z
             if direction == 'sell buy sell':
-                amount_x_sell = amount_y / xy[0] / (1 - self.fee)  # this much X we must sell on X/Y to have enough Y
-                amount_x_buy = amount_x_sell / (1 - self.fee)  # plus the fee, this much X we must buy on X/Z
+                amount_x_sell = amount_y / xy[0] / (1 - self._fee)  # this much X we must sell on X/Y to have enough Y
+                amount_x_buy = amount_x_sell / (1 - self._fee)  # plus the fee, this much X we must buy on X/Z
             elif direction == 'buy sell buy':
-                amount_x_buy = amount_y * (1 - self.fee) / xy[0]  # this much X we must buy on X/Y to spend our Y
-                amount_x_sell = amount_x_buy * (1 - self.fee)  # minus the fee, this much X we can sell
+                amount_x_buy = amount_y * (1 - self._fee) / xy[0]  # this much X we must buy on X/Y to spend our Y
+                amount_x_sell = amount_x_buy * (1 - self._fee)  # minus the fee, this much X we can sell
         # integrity check, have we calculated everything correctly?
         if (amount_y > yz[1] or ((amount_x_buy > xz[1] or amount_x_sell > xy[1]) and direction == 'sell buy sell')
                              or ((amount_x_sell > xz[1] or amount_x_buy > xy[1]) and direction == 'buy sell buy')):
@@ -234,21 +275,21 @@ class ArbitrageDetector:
         amounts_new = {}
         for amount_type, symbol in amounts_to_symbols.items():
             # check that we have all symbols info
-            if symbol not in self.symbols_filters:
+            if symbol not in self._symbol_reqs:
                 logger.warning(f'Missing {symbol} symbol filters. Normalization failed.')
                 return None
             # make sure that min_amount <= order amount <= max_amount
-            if amounts[amount_type] < self.symbols_filters[symbol]['min_amount']:
+            if amounts[amount_type] < self._symbol_reqs[symbol]['min_amount']:
                 return None
-            elif amounts[amount_type] > self.symbols_filters[symbol]['max_amount']:
-                amounts_new[amount_type] = self.symbols_filters[symbol]['max_amount']
+            elif amounts[amount_type] > self._symbol_reqs[symbol]['max_amount']:
+                amounts_new[amount_type] = self._symbol_reqs[symbol]['max_amount']
             else:
                 # round order amount precision to amount_step
                 amounts_new[amount_type] = amounts[amount_type].quantize(
-                    self.symbols_filters[symbol]['amount_step'], rounding=ROUND_DOWN
+                    self._symbol_reqs[symbol]['amount_step'], rounding=ROUND_DOWN
                 )
-            # check that amount * price >= min_notional
-            if amounts_new[amount_type] * prices[symbol] < self.symbols_filters[symbol]['min_notional']:
+            # check that amount * price >= min_total
+            if amounts_new[amount_type] * prices[symbol] < self._symbol_reqs[symbol]['min_total']:
                 return None  # amount is too little
         return amounts_new
 
@@ -281,24 +322,24 @@ class ArbitrageDetector:
                 return None
             # make sure x_profit >= 0
             while 1:
-                amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self.fee) - amounts_new['x_sell']
+                amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self._fee) - amounts_new['x_sell']
                 if amounts_new['x_profit'] >= 0:
                     break
-                amounts_new['x_sell'] -= self.symbols_filters[xy]['amount_step']
-                if amounts_new['x_sell'] < self.symbols_filters[xy]['min_amount']:
+                amounts_new['x_sell'] -= self._symbol_reqs[xy]['amount_step']
+                if amounts_new['x_sell'] < self._symbol_reqs[xy]['min_amount']:
                     return None
             # make sure y_profit >= 0
             while 1:
-                y_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xy]) * (1 - self.fee)
+                y_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xy]) * (1 - self._fee)
                 y_spend = amounts_new['y']
                 amounts_new['y_profit'] = y_got - y_spend
                 if amounts_new['y_profit'] >= 0:
                     break
-                amounts_new['y'] -= self.symbols_filters[yz]['amount_step']
-                if amounts_new['y'] < self.symbols_filters[yz]['min_amount']:
+                amounts_new['y'] -= self._symbol_reqs[yz]['amount_step']
+                if amounts_new['y'] < self._symbol_reqs[yz]['min_amount']:
                     return None
             # recalculate z_spend and z_profit with new amounts
-            z_got = self.calculate_counter_amount(amounts_new['y'], orderbooks[yz]) * (1 - self.fee)
+            z_got = self.calculate_counter_amount(amounts_new['y'], orderbooks[yz]) * (1 - self._fee)
             amounts_new['z_spend'] = self.calculate_counter_amount(amounts_new['x_buy'], orderbooks[xz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
         elif direction == 'buy sell buy':
@@ -307,24 +348,24 @@ class ArbitrageDetector:
                 return None
             # make sure y_profit >= 0
             while 1:
-                y_got = amounts_new['y'] * (1 - self.fee)
+                y_got = amounts_new['y'] * (1 - self._fee)
                 y_spend = self.calculate_counter_amount(amounts_new['x_buy'], orderbooks[xy])
                 amounts_new['y_profit'] = y_got - y_spend
                 if amounts_new['y_profit'] >= 0:
                     break
-                amounts_new['x_buy'] -= self.symbols_filters[xy]['amount_step']
-                if amounts_new['x_buy'] < self.symbols_filters[xy]['min_amount']:
+                amounts_new['x_buy'] -= self._symbol_reqs[xy]['amount_step']
+                if amounts_new['x_buy'] < self._symbol_reqs[xy]['min_amount']:
                     return None
             # make sure x_profit >= 0
             while 1:
-                amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self.fee) - amounts_new['x_sell']
+                amounts_new['x_profit'] = amounts_new['x_buy'] * (1 - self._fee) - amounts_new['x_sell']
                 if amounts_new['x_profit'] >= 0:
                     break
-                amounts_new['x_sell'] -= self.symbols_filters[xz]['amount_step']
-                if amounts_new['x_sell'] < self.symbols_filters[xz]['min_amount']:
+                amounts_new['x_sell'] -= self._symbol_reqs[xz]['amount_step']
+                if amounts_new['x_sell'] < self._symbol_reqs[xz]['min_amount']:
                     return None
             # recalculate z_spend and z_profit with new amounts
-            z_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xz]) * (1 - self.fee)
+            z_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xz]) * (1 - self._fee)
             amounts_new['z_spend'] = self.calculate_counter_amount(amounts_new['y'], orderbooks[yz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
         else:
@@ -334,7 +375,7 @@ class ArbitrageDetector:
         if amounts_new['z_profit'] < 0:
             return None
         amounts_new['profit_rel'] = amounts_new['z_profit'] / amounts_new['z_spend']
-        if amounts_new['profit_rel'] < self.min_profit:
+        if amounts_new['profit_rel'] < self._min_profit:
             return None
         return amounts_new
 
@@ -430,25 +471,25 @@ class ArbitrageDetector:
         currency_y = triangle[0][0]
         # initializing existing_arbitrages storage
         pairs = '{} {} {}'.format(yz, xz, xy)
-        if pairs not in self.existing_arbitrages:
-            self.existing_arbitrages[pairs] = {}
+        if pairs not in self._existing_arbitrages:
+            self._existing_arbitrages[pairs] = {}
         for actions in ['sell buy sell', 'buy sell buy']:
-            if actions not in self.existing_arbitrages[pairs]:
-                self.existing_arbitrages[pairs][actions] = 0
+            if actions not in self._existing_arbitrages[pairs]:
+                self._existing_arbitrages[pairs][actions] = 0
         # getting orderbooks
         for symbol in [yz, xz, xy]:
-            if not self.orderbooks[symbol].is_valid():
+            if not self._orderbooks[symbol].is_valid():
                     # logger.debug('Orderbooks are not valid right now')
                     return None
         bids = {
-            'yz': self.orderbooks[yz].get_bids(),
-            'xz': self.orderbooks[xz].get_bids(),
-            'xy': self.orderbooks[xy].get_bids()
+            'yz': self._orderbooks[yz].get_bids(),
+            'xz': self._orderbooks[xz].get_bids(),
+            'xy': self._orderbooks[xy].get_bids()
         }
         asks = {
-            'yz': self.orderbooks[yz].get_asks(),
-            'xz': self.orderbooks[xz].get_asks(),
-            'xy': self.orderbooks[xy].get_asks()
+            'yz': self._orderbooks[yz].get_asks(),
+            'xz': self._orderbooks[xz].get_asks(),
+            'xy': self._orderbooks[xy].get_asks()
         }
         bids_saved = {'yz': bids['yz'].copy(), 'xz': bids['xz'].copy(), 'xy': bids['xy'].copy()}
         asks_saved = {'yz': asks['yz'].copy(), 'xz': asks['xz'].copy(), 'xy': asks['xy'].copy()}
@@ -475,18 +516,18 @@ class ArbitrageDetector:
         while 1:
             # check profitability
             try:
-                profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self.fee) ** 3 - 1
+                profit_rel = bids['yz'][0][0] / asks['xz'][0][0] * bids['xy'][0][0] * (1 - self._fee) ** 3 - 1
             except IndexError:
                 # orderbook is too short
                 break
-            if profit_rel < self.min_profit:
+            if profit_rel < self._min_profit:
                 break
             # calculate trade amounts available on this level
             amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
                 'sell buy sell', bids['yz'][0], asks['xz'][0], bids['xy'][0]
             )
             # calculate the profit on this level
-            profit_z = amount_y * bids['yz'][0][0] * (1 - self.fee) - amount_x_buy * asks['xz'][0][0]
+            profit_z = amount_y * bids['yz'][0][0] * (1 - self._fee) - amount_x_buy * asks['xz'][0][0]
             # save the counted amounts and price levels
             amount_x_buy_total += amount_x_buy
             amount_x_sell_total += amount_x_sell
@@ -515,7 +556,7 @@ class ArbitrageDetector:
                 'z_profit': profit_z_total
             }
             # logger.debug(f'Amounts before recalculation: {amounts}')
-            amounts = self.limit_amounts(amounts, self.reduce_factor)
+            amounts = self.limit_amounts(amounts, self._reduce_factor)
             # logger.debug(f'Amounts limited: {amounts}')
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
@@ -527,10 +568,10 @@ class ArbitrageDetector:
             # logger.debug(f'Amounts normalized and recalculated: {normalized}')
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 now = int(time.time()*1000)
-                if self.existing_arbitrages[pairs]['sell buy sell'] == 0:
-                    self.existing_arbitrages[pairs]['sell buy sell'] = now
+                if self._existing_arbitrages[pairs]['sell buy sell'] == 0:
+                    self._existing_arbitrages[pairs]['sell buy sell'] = now
                 arb_found['sell buy sell'] = True
-                if now - self.existing_arbitrages[pairs]['sell buy sell'] >= self.min_age and arb_depth >= self.min_depth:
+                if now - self._existing_arbitrages[pairs]['sell buy sell'] >= self._min_age and arb_depth >= self._min_depth:
                     return Arbitrage(
                         actions=[
                             MarketAction(triangle[0], 'sell', prices['yz'], normalized['y']),
@@ -559,18 +600,18 @@ class ArbitrageDetector:
         while 1:
             # check profitability
             try:
-                profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self.fee) ** 3 - 1
+                profit_rel = bids['xz'][0][0] / asks['xy'][0][0] / asks['yz'][0][0] * (1 - self._fee) ** 3 - 1
             except IndexError:
                 # orderbook is too short
                 break
-            if profit_rel < self.min_profit:
+            if profit_rel < self._min_profit:
                 break
             # calculate trade amounts available on this level
             amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
                 'buy sell buy', asks['yz'][0], bids['xz'][0], asks['xy'][0]
             )
             # calculate the profit on this level
-            profit_z = amount_x_sell * bids['xz'][0][0] * (1 - self.fee) - amount_y * asks['yz'][0][0]
+            profit_z = amount_x_sell * bids['xz'][0][0] * (1 - self._fee) - amount_y * asks['yz'][0][0]
             # save the counted amounts and price levels
             amount_x_buy_total += amount_x_buy
             amount_x_sell_total += amount_x_sell
@@ -599,7 +640,7 @@ class ArbitrageDetector:
                 'z_profit': profit_z_total
             }
             # logger.debug(f'Amounts before recalculation: {amounts}')
-            amounts = self.limit_amounts(amounts, self.reduce_factor)
+            amounts = self.limit_amounts(amounts, self._reduce_factor)
             # logger.debug(f'Amounts limited: {amounts}')
             normalized = self.normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
@@ -611,10 +652,10 @@ class ArbitrageDetector:
             # logger.debug(f'Amounts normalized and recalculated: {normalized}')
             if normalized is not None:  # if arbitrage still exists after normalization & recalculation
                 now = int(time.time()*1000)
-                if self.existing_arbitrages[pairs]['buy sell buy'] == 0:
-                    self.existing_arbitrages[pairs]['buy sell buy'] = now
+                if self._existing_arbitrages[pairs]['buy sell buy'] == 0:
+                    self._existing_arbitrages[pairs]['buy sell buy'] = now
                 arb_found['buy sell buy'] = True
-                if now - self.existing_arbitrages[pairs]['buy sell buy'] >= self.min_age and arb_depth >= self.min_depth:
+                if now - self._existing_arbitrages[pairs]['buy sell buy'] >= self._min_age and arb_depth >= self._min_depth:
                     return Arbitrage(
                         actions=[
                             MarketAction(triangle[0], 'buy', prices['yz'], normalized['y']),
@@ -635,17 +676,17 @@ class ArbitrageDetector:
         # no arbitrage found
         # logger.info('No arbitrage found')
         for actions in ['sell buy sell', 'buy sell buy']:
-            if not arb_found[actions] and self.existing_arbitrages[pairs][actions] > 0:
-                self.existing_arbitrages[pairs][actions] = 0
+            if not arb_found[actions] and self._existing_arbitrages[pairs][actions] > 0:
+                self._existing_arbitrages[pairs][actions] = 0
                 dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
 
     def on_orderbook_changed(self, sender, symbol: str):
         try:
-            triangles = self.symbols[symbol]['triangles']
+            triangles = self._symbols[symbol]['triangles']
         except KeyError:
-            if symbol in self.symbols:
-                logger.warning(f'Triangles missing for symbol {symbol}: {self.symbols[symbol]}')
+            if symbol in self._symbols:
+                logger.warning(f'Triangles missing for symbol {symbol}: {self._symbols[symbol]}')
             else:
                 logger.warning(f'Symbol unknown: {symbol}')
         else:
@@ -656,10 +697,10 @@ class ArbitrageDetector:
 
     def get_book_volume_in_front(self, symbol: str, price: Decimal, side: str) -> Decimal:
         if side == 'BUY':
-            bids = self.orderbooks[symbol].get_bids()
+            bids = self._orderbooks[symbol].get_bids()
             return sum([v for p, v in bids if p > price])
         elif side == 'SELL':
-            asks = self.orderbooks[symbol].get_asks()
+            asks = self._orderbooks[symbol].get_asks()
             return sum([v for p, v in asks if p < price])
 
 
@@ -673,22 +714,13 @@ def test_on_arbitrage_disappeared(sender: ArbitrageDetector, pairs: str, actions
 
 async def main():
     logger.info('Starting...')
-    api = await BinanceApi.create(
+    exchange_class = get_exchange_class()
+    exchange = await exchange_class.create(
         config.get('Exchange', 'APIKey'),
         config.get('Exchange', 'APISecret')
     )
-    symbols_info = await api.get_symbols_info()
-    # symbols_info_slice = {}
-    # i = 0
-    # for symbol, symbol_info in symbols_info.items():
-    #     symbols_info_slice[symbol] = symbol_info
-    #     i += 1
-    #     if i >= 20:
-    #         break
-    # logger.debug(f'All Symbols Info: {symbols_info}')
     detector = ArbitrageDetector(
-        api=api,
-        symbols_info=symbols_info,
+        exchange=exchange,
         fee=config.getdecimal('Arbitrage', 'TradeFee'),
         min_profit=config.getdecimal('Arbitrage', 'MinProfit'),
         min_depth=config.getint('Arbitrage', 'MinArbDepth'),

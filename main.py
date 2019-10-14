@@ -1,24 +1,22 @@
 import asyncio
 from pydispatch import dispatcher
-from config import config
-from binance_api import BinanceApi
-from binance_account_info import BinanceAccountInfo
+from config import config, get_exchange_class
+from account_info import AccountInfo
+from exchanges.base_exchange import BaseExchange
 from arbitrage_detector import ArbitrageDetector, Arbitrage
-from action_executor import BinanceActionExecutor, Action
+from action_executor import ActionExecutor, Action
 from logger import get_logger
 logger = get_logger(__name__)
 
 
 class TriangularArbitrage:
-    def __init__(self, api: BinanceApi, account_info: BinanceAccountInfo, symbols_info: dict):
-        self._api = api
+    def __init__(self, exchange: BaseExchange, account_info: AccountInfo):
+        self._exchange = exchange
         self._account_info = account_info
-        self._symbols_info = symbols_info
         self._is_processing = False
         self._detector = ArbitrageDetector(
-            api=self._api,
-            symbols_info=symbols_info,
-            fee=config.getdecimal('Arbitrage', 'TradeFee'),
+            exchange=self._exchange,
+            fee=config.getdecimal('Exchange', 'TradeFee'),
             min_profit=config.getdecimal('Arbitrage', 'MinProfit'),
             min_depth=config.getint('Arbitrage', 'MinArbDepth'),
             min_age=config.getint('Arbitrage', 'MinArbAge'),
@@ -28,13 +26,13 @@ class TriangularArbitrage:
 
     @classmethod
     async def create(cls):
-        api = await BinanceApi.create(
+        exchange_class = get_exchange_class()
+        exchange = await exchange_class.create(
             config.get('Exchange', 'APIKey'),
             config.get('Exchange', 'APISecret')
         )
-        acc = await BinanceAccountInfo.create(api, auto_update_interval=10)
-        symbols_info = await api.get_symbols_info()
-        return cls(api, acc, symbols_info)
+        acc = await AccountInfo.create(exchange, auto_update_interval=10)
+        return cls(exchange, acc)
 
     def _on_arbitrage_processed(self, sender):
         logger.info('Arbitrage processed')
@@ -57,10 +55,9 @@ class TriangularArbitrage:
                     order_type='LIMIT'
                 )
             )
-        executor = BinanceActionExecutor(
-            api=self._api,
+        executor = ActionExecutor(
+            exchange=self._exchange,
             actions=actions,
-            symbols_info=self._symbols_info,
             account_info=self._account_info,
             detector=self._detector,
             arbitrage=arb

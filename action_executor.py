@@ -1,13 +1,12 @@
 import time
 import asyncio
-from typing import Dict
 from pydispatch import dispatcher
 from decimal import Decimal, ROUND_DOWN
 from typing import List, Tuple
 from collections import deque
-from config import config
-from binance_api import BinanceApi, BinanceSymbolInfo
-from binance_account_info import BinanceAccountInfo
+from config import config, get_exchange_class
+from exchanges.base_exchange import BaseExchange
+from account_info import AccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from logger import get_logger
 
@@ -58,14 +57,13 @@ class ActionSet:
         return self.__str__()
 
 
-class BinanceActionExecutor:
-    def __init__(self, api: BinanceApi, actions: List[Action],
-                 symbols_info: Dict[str, BinanceSymbolInfo], detector: ArbitrageDetector = None,
-                 arbitrage: Arbitrage = None, account_info: BinanceAccountInfo = None):
-        self._api = api
+class ActionExecutor:
+    def __init__(self, exchange: BaseExchange, actions: List[Action], detector: ArbitrageDetector = None,
+                 arbitrage: Arbitrage = None, account_info: AccountInfo = None):
+        self._exchange = exchange
+        self._symbols_info = exchange.get_symbols_info()
         self._raw_action_list = actions
         self._account_info = account_info
-        self._symbols_info = symbols_info
         self._detector = detector
         self._arbitrage = arbitrage
         self._trade_fee = config.getdecimal('Arbitrage', 'TradeFee')
@@ -73,17 +71,15 @@ class BinanceActionExecutor:
         self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast')
         self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime')
 
-    def __str__(self):
-        return ' -> '.join([action.side + ': ' + action.symbol for action in self._raw_action_list])
-
     async def run(self):
         # init account info if it hasn't been passed from above
         if self._account_info is None:
-            self._account_info = BinanceAccountInfo(self._api)
+            self._account_info = await AccountInfo.create(self._exchange)
 
+        # prepare a set of actions for execution
         action_set = self._get_executable_action_set()
         if action_set is None:
-            logger.info('Cannot execute those actions')
+            logger.info('Cannot execute these actions')
             dispatcher.send(signal='execution_finished', sender=self)
             return
         logger.info(f'Executable action set:\n{action_set}')
@@ -151,15 +147,14 @@ class BinanceActionExecutor:
                 # update order results in our main results list
                 results[idx] = result
                 # check how well they got filled
-                exec_amount = Decimal(result['executedQty'])
                 action = actions[idx]
-                if exec_amount == action.quantity:
+                if result.amount_executed == action.quantity:
                     logger.info(f'Action filled: {action}')
                     filled.append(idx)
-                elif 0 < exec_amount < action.quantity:
-                    logger.info(f'Action partially filled for {exec_amount}: {action}')
+                elif 0 < result.amount_executed < action.quantity:
+                    logger.info(f'Action partially filled for {result.amount_executed}: {action}')
                     unfilled.append(idx)
-                elif exec_amount == 0:
+                elif result.amount_executed == 0:
                     logger.info(f'Action not filled: {action}')
                     unfilled.append(idx)
 
@@ -224,7 +219,7 @@ class BinanceActionExecutor:
 
     def _get_executable_action_set(self) -> ActionSet or None:
         actions = self._raw_action_list
-        logger.debug(f'Initial actions list: {actions}')
+        # logger.debug(f'Initial actions list: {actions}')
         # actions list is expected to be exactly three items long, in a triangle
         if len(actions) != 3:
             logger.error(f'Number of actions is not 3: {actions}')
@@ -248,7 +243,7 @@ class BinanceActionExecutor:
         else:
             logger.error(f'Bad actions list: not a valid triangle! Actions: {actions}')
             return None
-        logger.debug(f'Sequenced actions list: {actions}')
+        # logger.debug(f'Sequenced actions list: {actions}')
         # then figure out which action to start with and rotate the sequence
         balance_props = []
         for action in actions:
@@ -265,7 +260,7 @@ class BinanceActionExecutor:
                 asset = base
                 amount = quantity
             balance = self._account_info.get_balance(asset)
-            logger.debug(f'{asset} balance: {balance:.8f}')
+            # logger.debug(f'{asset} balance: {balance:.8f}')
             balance_props.append(balance / amount)
         prop_min, prop_mid, prop_max = sorted(balance_props)
         idx_min = balance_props.index(prop_min)
@@ -281,24 +276,24 @@ class BinanceActionExecutor:
         if red_actions is not None:
             # 2/3 available, execute first two in parallel and then third
             return ActionSet([
-                [actions[idx_mid], actions[idx_max]],
-                [actions[idx_min],]
+                [red_actions[idx_mid], red_actions[idx_max]],
+                [red_actions[idx_min],]
             ])
         # availability 1/3:
-        actions = self._reduce_actions_by_proportion(actions, prop_max)
-        if actions is not None:
+        red_actions = self._reduce_actions_by_proportion(actions, prop_max)
+        if red_actions is not None:
             # 1/3 available, execute actions sequentially one by one
             # rotate to have the one with available balance first
             shift = -idx_max
             if shift != 0:
-                dq = deque(actions)
+                dq = deque(red_actions)
                 # logger.debug(f'Rotating actions list by: {shift}')
                 dq.rotate(shift)
-                actions = list(dq)
+                red_actions = list(dq)
             return ActionSet([
-                [actions[0],],
-                [actions[1],],
-                [actions[2],],
+                [red_actions[0],],
+                [red_actions[1],],
+                [red_actions[2],],
             ])
         return None
 
@@ -308,13 +303,13 @@ class BinanceActionExecutor:
                 logger.warning('Action amounts cannot be reduced without a Detector')
                 return None
             # recalculate action amounts to fit in our balance and keep the arbitrage profitable
-            logger.debug(f'Reducing the arbitrage by: {proportion}')
+            # logger.debug(f'Reducing the arbitrage by: {proportion}')
             reduced = self._detector.reduce_arbitrage(
                 arb=self._arbitrage,
                 reduce_factor=proportion
             )
             if reduced is None:
-                logger.debug('Arbitrage is not available with reduced amounts')
+                # logger.debug('Arbitrage is not available with reduced amounts')
                 return None
             # extract amounts from the reduced arbitrage
             for action in actions:
@@ -322,75 +317,62 @@ class BinanceActionExecutor:
                     a for a in reduced.actions if a.pair == action.pair and a.action.upper() == action.side
                 ), None)
                 action.quantity = a.amount
-            logger.debug(f'Reduced arbitrage actions list: {actions}')
+            # logger.debug(f'Reduced arbitrage actions list: {actions}')
         return actions
 
-    async def _execute_action(self, action: Action):
+    async def _execute_action(self, action: Action) -> BaseExchange.OrderResult or None:
         try:
-            return await self._api.create_order(
+            return await self._exchange.create_order(
                 symbol=action.symbol,
                 side=action.side,
-                order_type=action.type,
-                quantity=f'{action.quantity:f}',
-                price=None if action.price is None else f'{action.price:f}',
+                type=action.type,
+                amount=action.quantity,
+                price=action.price,
             )
-        except BinanceApi.Error as e:
-            logger.error(f'Action failed: {action}. Reason: {e}')
+        except BaseExchange.Error as e:
+            logger.error(f'Action failed: {action}. Reason: {e.message}')
             return None
 
-    async def _get_order_status(self, order_result) -> str or None:
+    async def _get_order_status(self, order_result: BaseExchange.OrderResult) -> str:
         try:
-            status = order_result['status']
+            status = order_result.status
         except KeyError:
             raise ActionError('Status not found')
         if status == 'NEW':
-            symbol = order_result['symbol']
-            order_id = order_result['orderId']
-            # Order statuses in Binance:
-            #   NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED
             try:
-                order_result = await self._api.order_info(symbol, order_id)
-            except BinanceApi.Error as e:
+                order_result = await self._exchange.get_order_result(order_result.symbol, order_result.order_id)
+            except BaseExchange.Error as e:
                 raise ActionError(f'Order info failed: {e.message}')
-            if order_result and 'status' in order_result:
-                status = order_result['status']
+            status = order_result.status
         return status
 
-    async def _wait_to_fill(self, order_result: dict, min_filling_time: int, max_filling_time: int) -> dict:
-        """Returns amount that got filled, the rest is considered failed to fill"""
+    async def _wait_to_fill(self, ores: BaseExchange.OrderResult,
+                            min_filling_time: int, max_filling_time: int) -> BaseExchange.OrderResult:
+        """Returns result with amount that got filled, the rest is considered failed to fill"""
 
-        symbol = order_result['symbol']
-        order_id = order_result['orderId']
-        status = order_result['status']
-        price = Decimal(order_result['price'])
-        side = order_result['side']
-        if status in ['NEW', 'PARTIALLY_FILLED']:
+        if ores.status in ['NEW', 'PARTIALLY_FILLED']:
             started = time.time()
             # keep checking until it gets filled or lost in the book
             while 1:
                 try:
-                    order_result = await self._api.order_info(symbol, order_id)
-                except BinanceApi.Error as e:
-                    logger.error(f'Failed to get order info, order: {symbol:order_id}, error: {e}')
+                    ores = await self._exchange.get_order_result(ores.symbol, ores.order_id)
+                except BaseExchange.Error as e:
+                    logger.error(f'Failed to get order info, order: {ores.symbol:order_id}, error: {e.message}')
                 else:
-                    try:
-                        status = order_result['status']
-                    except (TypeError, KeyError):
-                        logger.warning(f'Checking placed order status failed: {order_result}')
-                    if status == 'FILLED':
+                    if ores.status == 'FILLED':
                         break
-                    elif status not in ['NEW', 'PARTIALLY_FILLED']:
-                        logger.error(f'Unexpected order status: {status}')
+                    elif ores.status not in ['NEW', 'PARTIALLY_FILLED']:
+                        logger.error(f'Unexpected order status: {ores.status}')
                         break
                     if time.time() - started > min_filling_time:
                         # give up if the order is lost in the book
-                        amount_left = Decimal(order_result['origQty']) - Decimal(order_result['executedQty'])
+                        amount_left = ores.amount_original - ores.amount_executed
                         if amount_left > 0:
-                            vol_in_front = self._detector.get_book_volume_in_front(symbol, price, side)
+                            vol_in_front = self._detector.get_book_volume_in_front(ores.symbol, ores.price, ores.side)
                             rel_in_front = vol_in_front / amount_left
                             if rel_in_front >= 1:
                                 logger.info(
-                                    f'Order {symbol}:{order_id} is lost in the book: '
+                                    f'Order {ores.symbol}:{ores.order_id} is lost in the book: '
                                     f'{int(rel_in_front*100)}% of unfilled amount'
                                     f' is already in front of the order'
                                 )
@@ -398,11 +380,11 @@ class BinanceActionExecutor:
                     if time.time() - started > max_filling_time:
                         logger.info(
                             f'Max waiting time reached, order filled by '
-                            f'{order_result["executedQty"]} of {order_result["origQty"]}'
+                            f'{ores.amount_executed:f} of {ores.amount_original:f}'
                         )
                         break
                 await asyncio.sleep(config.getint('Arbitrage', 'CheckOrderInterval'))
-        return order_result
+        return ores
 
     async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
         order_results = []
@@ -411,21 +393,18 @@ class BinanceActionExecutor:
             *[self._wait_to_fill(result, min_filling_time, max_filling_time) for result in old_results]
         )
         # check each order's result one more time, as it may have changed after waiting
-        for old_result in old_results:
-            symbol = old_result['symbol']
-            order_id = old_result['orderId']
+        for old_r in old_results:
             try:
-                new_result = await self._api.order_info(symbol, order_id)
-            except BinanceApi.Error as e:
-                logger.error(f'Failed to get order info, order: {symbol:order_id}, error: {e}')
-                order_results.append(old_result)
+                new_r = await self._exchange.get_order_result(old_r.symbol, old_r.order_id)
+            except BaseExchange.Error as e:
+                logger.error(f'Failed to get order info, order: {old_r.symbol}:{old_r.order_id}, error: {e.message}')
+                order_results.append(old_r)
             else:
-                order_results.append(new_result)
+                order_results.append(new_r)
         return order_results
 
     def _revert_action(self, action: Action) -> Action:
-        qty_filter = self._symbols_info[action.symbol].get_qty_filter()
-        amount_step = Decimal(qty_filter[2]).normalize()
+        amount_step = self._symbols_info[action.symbol]['amount_step']
         amount_revert = (action.quantity * (1 - self._trade_fee)).quantize(amount_step, rounding=ROUND_DOWN)
         return Action(
             pair=action.pair,
@@ -442,51 +421,46 @@ class BinanceActionExecutor:
             order_type='MARKET'
         )
 
-    async def _cancel_order(self, order_result: dict) -> Decimal:
+    async def _cancel_order(self, ores: BaseExchange.OrderResult) -> Decimal:
         """Returns amount filled prior to cancellation"""
 
-        symbol = order_result['symbol']
-        order_id = order_result['orderId']
-        status = order_result['status']
-        if status in ['NEW', 'PARTIALLY_FILLED']:
+        if ores.status in ['NEW', 'PARTIALLY_FILLED']:
             # cancel the order
-            logger.info(f'Cancelling order {symbol}:{order_id}...')
+            logger.info(f'Cancelling order {ores.symbol}:{ores.order_id}...')
             amount_filled = Decimal(0)
             try:
-                cancel_result = await self._api.cancel_order(symbol, order_id)
-            except BinanceApi.Error as e:
+                cancel_res = await self._exchange.cancel_order(ores.symbol, ores.order_id)
+            except BaseExchange.Error as e:
                 if 'Unknown order sent' in e.message:
-                    logger.info(f'Order {symbol} {order_id} not found, already completed?')
+                    logger.info(f'Order {ores.symbol}:{ores.order_id} not found, already completed?')
                     # check if order is already completed
                     try:
-                        r = await self._api.order_info(symbol, order_id)
-                    except BinanceApi.Error as e:
+                        r = await self._exchange.get_order_result(ores.symbol, ores.order_id)
+                    except BaseExchange.Error as e:
                         logger.error(f'Checking failed-to-cancel order status failed: {e.message}')
                     else:
-                        status = r['status']
-                        if status == 'FILLED':
-                            amount_filled = Decimal(r['executedQty'])
+                        if r.status == 'FILLED':
+                            amount_filled = r.amount_executed
                         else:
-                            logger.error(f'Unexpected failed-to-cancel order status: {status}')
+                            logger.error(f'Unexpected failed-to-cancel order status: {r.status}')
                 else:
                     logger.error(f'Order cancellation failed: {e.message}')
             else:
-                amount_filled = Decimal(cancel_result['executedQty'])
+                amount_filled = cancel_res.amount_executed
                 logger.info(f'Order cancelled, executed amount: {amount_filled:f}')
         else:
-            amount_filled = Decimal(order_result['executedQty'])
+            amount_filled = ores.amount_executed
         return amount_filled
 
-    async def _cancel_and_revert(self, order_result: dict, action: Action) -> List[Action]:
+    async def _cancel_and_revert(self, ores: BaseExchange.OrderResult, action: Action) -> List[Action]:
         """Returns a list of emergency actions or an empty list"""
 
         # cancel the order
-        amount_filled = await self._cancel_order(order_result)
+        amount_filled = await self._cancel_order(ores)
         # revert what's been filled
         if amount_filled > 0:
             logger.info(f'Order has been filled for {amount_filled:f} {action.base}, it will be reverted')
-            qty_filter = self._symbols_info[action.symbol].get_qty_filter()
-            amount_step = Decimal(qty_filter[2]).normalize()
+            amount_step = self._symbols_info[action.symbol]['amount_step']
             amount_revert = (amount_filled * (1 - self._trade_fee)).quantize(amount_step, rounding=ROUND_DOWN)
             return [
                 Action(
@@ -498,15 +472,14 @@ class BinanceActionExecutor:
             ]
         return []
 
-    async def _cancel_and_finalize(self, order_result: dict, action: Action) -> List[Action]:
+    async def _cancel_and_finalize(self, ores: BaseExchange.OrderResult, action: Action) -> List[Action]:
         """Returns a list of emergency actions or an empty list"""
 
         # cancel the order
-        amount_filled = await self._cancel_order(order_result)
+        amount_filled = await self._cancel_order(ores)
         # finalize what's unfilled
         if amount_filled < action.quantity:
-            qty_filter = self._symbols_info[action.symbol].get_qty_filter()
-            amount_step = Decimal(qty_filter[2]).normalize()
+            amount_step = self._symbols_info[action.symbol]['amount_step']
             amount_to_finalize = (action.quantity - amount_filled).quantize(amount_step, rounding=ROUND_DOWN)
             logger.info(
                 f'Order has been filled for {amount_filled:f} {action.base}, '
@@ -523,8 +496,6 @@ class BinanceActionExecutor:
         return []
 
 
-
-
 def test_on_execution_finished(sender):
     logger.info('Actions execution has finished!')
 
@@ -535,12 +506,12 @@ async def main():
     # it will try to execute a demonstratory set of actions
     # they won't give actual profit, it's just to test that it all works
 
-    api = await BinanceApi.create(
+    exchange_class = get_exchange_class()
+    exchange = await exchange_class.create(
         config.get('Exchange', 'APIKey'),
         config.get('Exchange', 'APISecret')
     )
-    acc = await BinanceAccountInfo.create(api, auto_update_interval=10)
-    symbols_info = await api.get_symbols_info()
+    acc = await AccountInfo.create(exchange, auto_update_interval=10)
     actions = [
         Action(
             pair=('BTC', 'USDT'),
@@ -565,7 +536,7 @@ async def main():
         )
     ]
 
-    executor = BinanceActionExecutor(api=api, actions=actions, symbols_info=symbols_info, account_info=acc)
+    executor = ActionExecutor(exchange=exchange, actions=actions, account_info=acc)
     dispatcher.connect(test_on_execution_finished, signal='execution_finished', sender=executor)
     await executor.run()
 
