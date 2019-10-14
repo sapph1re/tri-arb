@@ -357,7 +357,7 @@ class ActionExecutor:
                 try:
                     ores = await self._exchange.get_order_result(ores.symbol, ores.order_id)
                 except BaseExchange.Error as e:
-                    logger.error(f'Failed to get order info, order: {ores.symbol}:{order_id}, error: {e.message}')
+                    logger.error(f'Failed to get order info, order: {ores.symbol}:{ores.order_id}, error: {e.message}')
                 else:
                     if ores.status == 'FILLED':
                         break
