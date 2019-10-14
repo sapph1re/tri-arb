@@ -66,7 +66,7 @@ class ActionExecutor:
         self._account_info = account_info
         self._detector = detector
         self._arbitrage = arbitrage
-        self._trade_fee = config.getdecimal('Arbitrage', 'TradeFee')
+        self._trade_fee = config.getdecimal('Exchange', 'TradeFee')
         self._min_fill_time = config.getint('Arbitrage', 'MinFillTime')
         self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast')
         self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime')

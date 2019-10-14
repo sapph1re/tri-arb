@@ -721,7 +721,7 @@ async def main():
     )
     detector = ArbitrageDetector(
         exchange=exchange,
-        fee=config.getdecimal('Arbitrage', 'TradeFee'),
+        fee=config.getdecimal('Exchange', 'TradeFee'),
         min_profit=config.getdecimal('Arbitrage', 'MinProfit'),
         min_depth=config.getint('Arbitrage', 'MinArbDepth'),
         min_age=config.getint('Arbitrage', 'MinArbAge'),
