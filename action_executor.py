@@ -67,9 +67,9 @@ class ActionExecutor:
         self._detector = detector
         self._arbitrage = arbitrage
         self._trade_fee = config.getdecimal('Exchange', 'TradeFee')
-        self._min_fill_time = config.getint('Arbitrage', 'MinFillTime')
-        self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast')
-        self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime')
+        self._min_fill_time = config.getint('Arbitrage', 'MinFillTime') * 1000
+        self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast') * 1000
+        self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime') * 1000
 
     async def run(self):
         # init account info if it hasn't been passed from above
@@ -347,7 +347,7 @@ class ActionExecutor:
         return status
 
     async def _wait_to_fill(self, ores: BaseExchange.OrderResult,
-                            min_filling_time: int, max_filling_time: int) -> BaseExchange.OrderResult:
+                            min_filling_time_ms: int, max_filling_time_ms: int) -> BaseExchange.OrderResult:
         """Returns result with amount that got filled, the rest is considered failed to fill"""
 
         if ores.status in ['NEW', 'PARTIALLY_FILLED']:
@@ -364,7 +364,7 @@ class ActionExecutor:
                     elif ores.status not in ['NEW', 'PARTIALLY_FILLED']:
                         logger.error(f'Unexpected order status: {ores.status}')
                         break
-                    if time.time() - started > min_filling_time:
+                    if time.time() - started > min_filling_time_ms:
                         # give up if the order is lost in the book
                         amount_left = ores.amount_original - ores.amount_executed
                         if amount_left > 0:
@@ -377,7 +377,7 @@ class ActionExecutor:
                                     f' is already in front of the order'
                                 )
                                 break
-                    if time.time() - started > max_filling_time:
+                    if time.time() - started > max_filling_time_ms:
                         logger.info(
                             f'Max waiting time reached, order filled by '
                             f'{ores.amount_executed:f} of {ores.amount_original:f}'
@@ -386,11 +386,11 @@ class ActionExecutor:
                 await asyncio.sleep(config.getint('Arbitrage', 'CheckOrderInterval'))
         return ores
 
-    async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
+    async def _wait_all_to_fill(self, old_results: list, min_filling_time_ms: int, max_filling_time_ms: int) -> list:
         order_results = []
         # wait to fill each
         old_results = await asyncio.gather(
-            *[self._wait_to_fill(result, min_filling_time, max_filling_time) for result in old_results]
+            *[self._wait_to_fill(result, min_filling_time_ms, max_filling_time_ms) for result in old_results]
         )
         # check each order's result one more time, as it may have changed after waiting
         for old_r in old_results:
@@ -449,6 +449,7 @@ class ActionExecutor:
                 amount_filled = cancel_res.amount_executed
                 logger.info(f'Order cancelled, executed amount: {amount_filled:f}')
         else:
+            logger.info(f'Not cancelling order {ores.symbol}:{ores.order_id}, status: {ores.status}')
             amount_filled = ores.amount_executed
         return amount_filled
 

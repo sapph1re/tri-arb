@@ -94,7 +94,7 @@ class BinanceExchange(BaseExchange):
         status = result['status']
         if status == 'CANCELED':
             status = 'CANCELLED'
-        if status not in ['NEW, PARTIALLY_FILLED, FILLED, CANCELLED']:
+        if status not in ['NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCELLED']:
             status = 'OTHER'
         return BaseExchange.OrderResult(
             symbol=result['symbol'],
