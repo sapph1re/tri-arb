@@ -98,7 +98,7 @@ class ActionExecutor:
             placed = []
             for idx, result in enumerate(results):
                 action = actions[idx]
-                if result is None or 'error' in result:
+                if result is None:
                     # order creation failed
                     logger.error(f'Failed to place an order! Failed action: {action}')
                     failed.append(idx)
