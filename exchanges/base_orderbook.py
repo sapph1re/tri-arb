@@ -24,14 +24,22 @@ class BaseOrderbook:
 
     def get_bids(self) -> list:
         if self._bids_changed:
-            bids = self._bids.copy()    # in case it changes while iterating
-            self._bids_list_cached = [(price, bids[price]) for price in self._bids_prices.copy()]
+            self._bids_list_cached = []
+            for price in self._bids_prices:
+                try:
+                    self._bids_list_cached.append((price, self._bids[price]))
+                except KeyError:
+                    logger.warning(f'Price is missing in {self._symbol} bids: {price}')
             self._bids_changed = False
         return self._bids_list_cached.copy()
 
     def get_asks(self) -> list:
         if self._asks_changed:
-            asks = self._asks.copy()    # in case it changes while iterating
-            self._asks_list_cached = [(price, asks[price]) for price in self._asks_prices.copy()]
+            self._asks_list_cached = []
+            for price in self._asks_prices:
+                try:
+                    self._asks_list_cached.append((price, self._asks[price]))
+                except KeyError:
+                    logger.warning(f'Price is missing in {self._symbol} asks: {price}')
             self._asks_changed = False
         return self._asks_list_cached.copy()
