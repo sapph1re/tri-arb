@@ -21,8 +21,17 @@ class BinanceAPI:
         return cls(client)
 
     async def safe_call(self, coro):
+        tries = 10
         try:
-            return await coro
+            while 1:
+                try:
+                    return await coro
+                except:
+                    tries -= 1
+                    if tries > 0:
+                        continue
+                    else:
+                        raise
         except asyncio.TimeoutError:
             raise self.Error('Timed out')
         except BinanceAPIException as e:
