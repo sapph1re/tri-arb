@@ -24,12 +24,14 @@ class BaseOrderbook:
 
     def get_bids(self) -> list:
         if self._bids_changed:
-            self._bids_list_cached = [(price, self._bids[price]) for price in self._bids_prices]
+            bids = self._bids.copy()    # in case it changes while iterating
+            self._bids_list_cached = [(price, bids[price]) for price in self._bids_prices.copy()]
             self._bids_changed = False
         return self._bids_list_cached.copy()
 
     def get_asks(self) -> list:
         if self._asks_changed:
-            self._asks_list_cached = [(price, self._asks[price]) for price in self._asks_prices]
+            asks = self._asks.copy()    # in case it changes while iterating
+            self._asks_list_cached = [(price, asks[price]) for price in self._asks_prices.copy()]
             self._asks_changed = False
         return self._asks_list_cached.copy()
