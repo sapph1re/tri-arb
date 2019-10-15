@@ -10,17 +10,18 @@ logger = get_logger(__name__)
 
 class BinanceWebsocket:
     def __init__(self):
-        self.ws = None
-        self.thread = None
-        self.symbols = set()
+        self._ws = None
+        self._thread = None
+        self._symbols = set()
+        self._stop_now = False
 
     def add_symbol(self, symbol: str):
-        self.symbols.add(symbol)
+        self._symbols.add(symbol)
 
     def start(self):
-        self.thread = threading.Thread(target=self.run, name='BinanceWebsocket')
-        self.thread.setDaemon(True)
-        self.thread.start()
+        self._thread = threading.Thread(target=self.run, name='BinanceWebsocket')
+        self._thread.setDaemon(True)
+        self._thread.start()
 
     def on_ws_message(self, message: str):
         # logger.info(f'Websocket message: {message}')
@@ -35,33 +36,36 @@ class BinanceWebsocket:
             )
 
     def on_ws_error(self, error=None):
-        logger.info(f'Websocket error: {error}, websocket symbols: {self.symbols}')
+        logger.info(f'Websocket error: {error}')
 
     def on_ws_close(self):
-        logger.info(f'Websocket closed: {self.symbols}')
+        logger.info(f'Websocket closed: {", ".join(self._symbols)}')
         dispatcher.send(signal='ws_closed', sender=self)
 
     def on_ws_open(self):
-        logger.info(f'Websocket open: {self.symbols}')
+        logger.info(f'Websocket open: {", ".join(self._symbols)}')
 
     def run(self):
         logger.info('BinanceWebsocket starting...')
         # websocket.enableTrace(True)   # will print detailed connection info
-        streams = '/'.join([f'{symbol.lower()}@depth20@100ms' for symbol in self.symbols])
+        streams = '/'.join([f'{symbol.lower()}@depth20@100ms' for symbol in self._symbols])
         wss_url = f'wss://stream.binance.com:9443/stream?streams={streams}'
-        self.ws = websocket.WebSocketApp(
-            wss_url,
-            on_message=self.on_ws_message,
-            on_error=self.on_ws_error,
-            on_close=self.on_ws_close
-        )
-        self.ws.on_open = self.on_ws_open
-        self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+        while not self._stop_now:
+            self._ws = websocket.WebSocketApp(
+                wss_url,
+                on_message=self.on_ws_message,
+                on_error=self.on_ws_error,
+                on_close=self.on_ws_close
+            )
+            self._ws.on_open = self.on_ws_open
+            self._ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+            logger.info('Restarting the websocket')
         logger.info('BinanceWebsocket stopped')
 
     def stop(self):
-        self.ws.close()
-        self.thread.join()
+        self._stop_now = True
+        self._ws.close()
+        self._thread.join()
 
 
 def test_on_ws_depth(sender, symbol: str, data: dict):
