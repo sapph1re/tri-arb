@@ -57,8 +57,8 @@ class BinanceOrderbook(BaseOrderbook):
                 self._bids_prices.add(price)
             changed = True
         for price in not_mentioned:
-            self._bids.pop(price, None)
             self._bids_prices.discard(price)
+            self._bids.pop(price, None)
             changed = True
         self._bids_changed = self._bids_changed or changed
         return changed
@@ -77,8 +77,8 @@ class BinanceOrderbook(BaseOrderbook):
                 self._asks_prices.add(price)
             changed = True
         for price in not_mentioned:
-            self._asks.pop(price, None)
             self._asks_prices.discard(price)
+            self._asks.pop(price, None)
             changed = True
         self._asks_changed = self._asks_changed or changed
         return changed
