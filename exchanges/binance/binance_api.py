@@ -20,12 +20,12 @@ class BinanceAPI:
         client = await AsyncClient.create(api_key, api_secret)
         return cls(client)
 
-    async def safe_call(self, coro):
+    async def safe_call(self, func, *args, **kwargs):
         tries = 10
         try:
             while 1:
                 try:
-                    return await coro
+                    return await func(*args, **kwargs)
                 except:
                     tries -= 1
                     if tries > 0:
@@ -33,9 +33,9 @@ class BinanceAPI:
                     else:
                         raise
         except asyncio.TimeoutError:
-            raise self.Error('Timed out')
+            raise self.Error('Timed out 10 times')
         except BinanceAPIException as e:
-            raise self.Error(str(e))
+            raise self.Error(f'{e} 10 times')
 
     async def time(self) -> dict:
         """
@@ -46,7 +46,7 @@ class BinanceAPI:
         :return: словарь с текущим временем.
         """
         return await self.safe_call(
-            self._client.get_server_time()
+            self._client.get_server_time
         )
 
     async def exchange_info(self) -> dict:
@@ -58,7 +58,7 @@ class BinanceAPI:
         :return: структура данных в словаре
         """
         return await self.safe_call(
-            self._client.get_exchange_info()
+            self._client.get_exchange_info
         )
 
     async def depth(self, symbol: str, limit: int = 100) -> dict:
@@ -80,7 +80,9 @@ class BinanceAPI:
         :return: значения в словаре
         """
         return await self.safe_call(
-            self._client.get_order_book(symbol=symbol.upper(), limit=limit)
+            self._client.get_order_book,
+            symbol=symbol.upper(),
+            limit=limit
         )
 
     async def create_order(self, symbol: str, side: str, order_type: str, quantity,
@@ -166,7 +168,8 @@ class BinanceAPI:
         if new_order_resp_type:
             kwargs['newOrderRespType'] = new_order_resp_type
         return await self.safe_call(
-            self._client.create_order(**kwargs)
+            self._client.create_order,
+            **kwargs
         )
 
     async def test_order(self, symbol: str, side: str, order_type: str, quantity,
@@ -230,7 +233,8 @@ class BinanceAPI:
         if new_order_resp_type:
             kwargs['newOrderRespType'] = new_order_resp_type
         return await self.safe_call(
-            self._client.create_test_order(**kwargs)
+            self._client.create_test_order,
+            **kwargs
         )
 
     async def order_info(self, symbol: str, order_id: int = None, orig_client_order_id: str = None,
@@ -261,7 +265,8 @@ class BinanceAPI:
         if recv_window:
             kwargs['recvWindow'] = recv_window
         return await self.safe_call(
-            self._client.get_order(**kwargs)
+            self._client.get_order,
+            **kwargs
         )
 
     async def cancel_order(self, symbol: str, order_id: int = None,
@@ -296,7 +301,8 @@ class BinanceAPI:
         if new_client_order_id:
             kwargs['newClientOrderId'] = new_client_order_id
         return await self.safe_call(
-            self._client.cancel_order(**kwargs)
+            self._client.cancel_order,
+            **kwargs
         )
 
     async def account(self, recv_window: int = None) -> dict:
@@ -318,7 +324,8 @@ class BinanceAPI:
         if recv_window:
             kwargs['recvWindow'] = recv_window
         return await self.safe_call(
-            self._client.get_account(**kwargs)
+            self._client.get_account,
+            **kwargs
         )
 
     async def get_symbols_info(self) -> List[dict]:
@@ -361,7 +368,7 @@ class BinanceAPI:
         }
         """
         response_json = await self.safe_call(
-            self.exchange_info()
+            self.exchange_info
         )
         try:
             symbols_info = response_json['symbols']
