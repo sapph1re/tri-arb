@@ -45,8 +45,8 @@ class Arbitrage:
         actions_str = ' -> '.join([str(action) for action in self.actions])
         return (
             f'{actions_str}, trade amount: {self.amount_z:f} {self.currency_z}, '
-            f'profit: +{self.profit_z:f} {self.currency_z} (+{self.profit_z_rel*100}%), '
-            f'+{self.profit_x:f} {self.currency_x}, +{self.profit_y:f} {self.currency_y}'
+            f'profit: {self.profit_z:+f} {self.currency_z} ({self.profit_z_rel*100:+.2f}%), '
+            f'{self.profit_x:+f} {self.currency_x}, {self.profit_y:+f} {self.currency_y}'
         )
 
     def __repr__(self):
@@ -365,9 +365,7 @@ class ArbitrageDetector:
         else:
             logger.warning(f'Bad direction: {direction}')
             return None
-        # make sure it's still profitable
-        if amounts_new['z_profit'] < 0:
-            return None
+        # make sure we still meet minimal profit
         amounts_new['profit_rel'] = amounts_new['z_profit'] / amounts_new['z_spend']
         if amounts_new['profit_rel'] < self._min_profit:
             return None
