@@ -97,7 +97,7 @@ class ArbitrageDetector:
         self._orderbooks = self._exchange.run_orderbooks(self._symbols)
 
     @staticmethod
-    def _make_asset_dicts(symbols_info: Dict[str, Dict[str, Decimal]]) -> Tuple[dict, dict]:
+    def _make_asset_dicts(symbols_info: Dict[str, Dict[str, str]]) -> Tuple[dict, dict]:
         base_dict = {}
         quote_dict = {}
         for symbol, info in symbols_info.items():
@@ -111,7 +111,7 @@ class ArbitrageDetector:
             quote_dict[quote_asset].add(symbol)
         return base_dict, quote_dict
 
-    def _make_triangles(self, symbols_info: Dict[str, Dict[str, Decimal]]) -> set:
+    def _make_triangles(self, symbols_info: Dict[str, Dict[str, str]]) -> set:
         """
         Find triangles in a list of symbols
         :param symbols_info: symbols to work with, format: {'base_asset': str, 'quote_asset': str}}
@@ -123,20 +123,14 @@ class ArbitrageDetector:
         """
         base_dict, quote_dict = self._make_asset_dicts(symbols_info)
         triangles = set()
-
         for quote, symbols in quote_dict.items():
-            quote_len = len(quote)
-            combs = combinations(symbols, 2)
-
-            for a, b in combs:
-                base1 = a[:-quote_len]
-                base2 = b[:-quote_len]
+            for a, b in combinations(symbols, 2):
+                base1 = symbols_info[a]['base_asset']
+                base2 = symbols_info[b]['base_asset']
                 if (base1 not in quote_dict) and (base2 not in quote_dict):
                     continue
-
-                c1 = base2 + base1
-                c2 = base1 + base2
-
+                c1 = self._exchange.make_symbol(base2, base1)
+                c2 = self._exchange.make_symbol(base1, base2)
                 if ((base1 in quote_dict) and (base2 in base_dict) and
                         (c1 in quote_dict[base1]) and (c1 in base_dict[base2])):
                     triangles.add(
@@ -150,7 +144,7 @@ class ArbitrageDetector:
                         ((base2, quote),
                          (base1, quote),
                          (base1, base2))
-                    )
+                )
         return triangles
 
     @staticmethod
@@ -184,7 +178,7 @@ class ArbitrageDetector:
             if triangle[0][0] == triangle[2][1] and triangle[0][1] == triangle[1][1] and triangle[1][0] == triangle[2][0]:
                 triangles_verified.add(triangle)
                 for pair in triangle:
-                    symbol = pair[0]+pair[1]
+                    symbol = self._exchange.make_symbol(pair[0], pair[1])
                     if symbol not in symbols:
                         symbols[symbol] = {
                             'base': pair[0],
@@ -463,9 +457,9 @@ class ArbitrageDetector:
         :param triangle: ((Y, Z), (X, Z), (X, Y)) example: (('ETH', 'BTC'), ('EOS', 'BTC'), ('EOS', 'ETH'))
         :return: Arbitrage instance or None
         """
-        yz = triangle[0][0] + triangle[0][1]
-        xz = triangle[1][0] + triangle[1][1]
-        xy = triangle[2][0] + triangle[2][1]
+        yz = self._exchange.make_symbol(triangle[0][0], triangle[0][1])
+        xz = self._exchange.make_symbol(triangle[1][0], triangle[1][1])
+        xy = self._exchange.make_symbol(triangle[2][0], triangle[2][1])
         currency_z = triangle[0][1]
         currency_x = triangle[1][0]
         currency_y = triangle[0][0]
@@ -674,7 +668,7 @@ class ArbitrageDetector:
                     )
 
         # no arbitrage found
-        # logger.info('No arbitrage found')
+        # logger.info(f'No arbitrage found in {triangle}')
         for actions in ['sell buy sell', 'buy sell buy']:
             if not arb_found[actions] and self._existing_arbitrages[pairs][actions] > 0:
                 self._existing_arbitrages[pairs][actions] = 0
@@ -719,6 +713,7 @@ async def main():
         config.get('Exchange', 'APIKey'),
         config.get('Exchange', 'APISecret')
     )
+    logger.info('Exchange has started')
     detector = ArbitrageDetector(
         exchange=exchange,
         fee=config.getdecimal('Exchange', 'TradeFee'),
@@ -727,6 +722,7 @@ async def main():
         min_age=config.getint('Arbitrage', 'MinArbAge'),
         reduce_factor=config.getdecimal('Arbitrage', 'AmountReduceFactor')
     )
+    logger.info('Arbitrage Detector has started')
 
     dispatcher.connect(test_on_arbitrage_detected, signal='arbitrage_detected', sender=detector)
     dispatcher.connect(test_on_arbitrage_disappeared, signal='arbitrage_disappeared', sender=detector)

@@ -28,12 +28,12 @@ class BinanceOrderbook(BaseOrderbook):
     def _on_ws_depth(self, sender, symbol: dict, data: dict):
         if symbol != self._symbol:
             return
-        ob_changed = self.update_orderbook(data)
+        ob_changed = self._update_orderbook(data)
         self._valid = True
         if ob_changed:
             dispatcher.send(signal='orderbook_changed', sender=self, symbol=self._symbol)
 
-    def update_orderbook(self, snapshot):
+    def _update_orderbook(self, snapshot):
         changed = False
         try:
             bids_changed = self._update_bids(snapshot['bids'])
@@ -44,7 +44,6 @@ class BinanceOrderbook(BaseOrderbook):
         return changed
 
     def _update_bids(self, bids_list) -> bool:
-        changed = False
         not_mentioned = set(self._bids)
         for each in bids_list:
             price = Decimal(each[0])
@@ -55,16 +54,14 @@ class BinanceOrderbook(BaseOrderbook):
             self._bids[price] = amount
             if price not in self._bids_prices:
                 self._bids_prices.add(price)
-            changed = True
+            self._bids_changed = True
         for price in not_mentioned:
             self._bids_prices.discard(price)
             self._bids.pop(price, None)
-            changed = True
-        self._bids_changed = self._bids_changed or changed
-        return changed
+            self._bids_changed = True
+        return self._bids_changed
 
     def _update_asks(self, asks_list):
-        changed = False
         not_mentioned = set(self._asks)
         for each in asks_list:
             price = Decimal(each[0])
@@ -75,10 +72,9 @@ class BinanceOrderbook(BaseOrderbook):
             self._asks[price] = amount
             if price not in self._asks_prices:
                 self._asks_prices.add(price)
-            changed = True
+            self._asks_changed = True
         for price in not_mentioned:
             self._asks_prices.discard(price)
             self._asks.pop(price, None)
-            changed = True
-        self._asks_changed = self._asks_changed or changed
-        return changed
+            self._asks_changed = True
+        return self._asks_changed

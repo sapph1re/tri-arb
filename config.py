@@ -3,12 +3,14 @@ import importlib
 from decimal import Decimal
 from typing import Type
 from exchanges.base_exchange import BaseExchange
+import os
 
 config = configparser.ConfigParser(
     inline_comment_prefixes = ('#', ';'),
     converters = {'decimal': Decimal}
 )
-config.read('config.ini')
+base_dir = os.path.dirname(os.path.abspath(__file__))
+config.read(f'{base_dir}/config.ini')
 
 def get_exchange_class() -> Type[BaseExchange]:
     exchange_name = config.get('Exchange', 'Exchange').lower()

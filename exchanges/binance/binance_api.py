@@ -26,16 +26,15 @@ class BinanceAPI:
             while 1:
                 try:
                     return await func(*args, **kwargs)
-                except:
+                except BaseException as e:
+                    logger.warning(f'API call failed: {args} {kwargs}. Reason: {e}')
                     tries -= 1
                     if tries > 0:
                         continue
                     else:
                         raise
-        except asyncio.TimeoutError:
-            raise self.Error('Timed out 10 times')
-        except BinanceAPIException as e:
-            raise self.Error(f'{e} 10 times')
+        except (asyncio.TimeoutError, BinanceAPIException):
+            raise self.Error('Failed 10 times')
 
     async def time(self) -> dict:
         """

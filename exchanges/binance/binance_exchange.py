@@ -8,7 +8,7 @@ from .binance_orderbook import BinanceOrderbook
 
 
 class BinanceExchange(BaseExchange):
-    def __init__(self, api):
+    def __init__(self, api: BinanceAPI):
         super().__init__()
         self._api = api
         self._symbols_info = {}
@@ -38,6 +38,9 @@ class BinanceExchange(BaseExchange):
 
     def get_symbols_info(self):
         return self._symbols_info
+
+    def make_symbol(self, base: str, quote: str) -> str:
+        return base + quote
 
     def run_orderbooks(self, symbols: Dict[str, dict]) -> Dict[str, BaseOrderbook]:
         orderbooks = {}

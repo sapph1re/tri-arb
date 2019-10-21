@@ -31,7 +31,17 @@ class BaseExchange:
         return {}
 
     def get_symbols_info(self) -> Dict[str, dict]:
+        # must return a dict, where key is a symbol and value is a dict containing:
+        #   base_asset
+        #   quote_asset
+        #   min_amount
+        #   max_amount
+        #   amount_step
+        #   min_total
         return {}
+
+    def make_symbol(self, base: str, quote: str) -> str:
+        return ''
 
     def run_orderbooks(self, symbols: Dict[str, dict]) -> Dict[str, BaseOrderbook]:
         return {}

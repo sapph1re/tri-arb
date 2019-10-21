@@ -3,4 +3,4 @@ __pycache__/
 ob_*/
 *.txt
 *.log
-config.ini
+*.ini
