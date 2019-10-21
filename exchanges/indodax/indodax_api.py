@@ -22,64 +22,69 @@ class IndodaxAPI:
         loop = asyncio.get_event_loop()
         self._session = aiohttp.ClientSession(loop=loop, headers={})
         self._last_request_ts = 0
-        self._request_lock = asyncio.Lock()
+        self._priority_locks = {
+            0: asyncio.Lock(),
+            1: asyncio.Lock(),
+            2: asyncio.Lock()
+        }
 
-    async def depth(self, symbol: str) -> dict:
-        return await self._safe_call(self._request_public, 'get', f'api/{symbol.lower()}/depth')
+    async def depth(self, symbol: str, urgency: int = 0) -> dict:
+        return await self._safe_call(urgency, self._request_public, 'get', f'api/{symbol.lower()}/depth')
 
-    async def tickers(self) -> dict:
-        return await self._safe_call(self._request_public, 'get', 'api/tickers')
+    async def tickers(self, urgency: int = 0) -> dict:
+        return await self._safe_call(urgency, self._request_public, 'get', 'api/tickers')
 
-    async def account_info(self) -> dict:
-        return await self._safe_call(self._request_private, 'getInfo')
+    async def account_info(self, urgency: int = 0) -> dict:
+        return await self._safe_call(urgency, self._request_private, 'getInfo')
 
-    async def create_order(self, symbol: str, side: str, price: str, amount: str) -> dict:
+    async def create_order(self, symbol: str, side: str, price: str, amount: str, urgency: int = 0) -> dict:
         """amount is the amount to spend, i.e. when buying the amount is in quote currency"""
         base, quote = symbol.lower().split('_')
         spendable = quote if side == 'buy' else base
-        return await self._safe_call(self._request_private, 'trade', {
+        params = {
             'pair': symbol,
             'type': side,
             'price': price,
             spendable: amount
-        })
+        }
+        return await self._safe_call(urgency, self._request_private, 'trade', params)
 
-    async def order_info(self, symbol: str, order_id: int) -> dict:
-        return await self._safe_call(self._request_private, 'getOrder', {
+    async def order_info(self, symbol: str, order_id: int, urgency: int = 0) -> dict:
+        params = {
             'pair': symbol.lower(),
             'order_id': order_id
-        })
+        }
+        return await self._safe_call(urgency, self._request_private, 'getOrder', params)
 
-    async def cancel_order(self, symbol: str, order_id: int, side: str) -> dict:
-        return await self._safe_call(self._request_private, 'cancelOrder', {
+    async def cancel_order(self, symbol: str, order_id: int, side: str, urgency: int = 0) -> dict:
+        params = {
             'pair': symbol.lower(),
             'order_id': order_id,
             'type': side
-        })
-
-    async def open_orders(self, symbol: str = None) -> dict:
-        params = {'pair': symbol.lower()} if symbol is not None else {}
-        return await self._safe_call(self._request_private, 'openOrders', params)
-
-    async def order_history(self, symbol: str, count: int = None, _from: int = None) -> dict:
-        params = {
-            'pair': symbol.lower()
         }
+        return await self._safe_call(urgency, self._request_private, 'cancelOrder', params)
+
+    async def open_orders(self, symbol: str = None, urgency: int = 0) -> dict:
+        params = {'pair': symbol.lower()} if symbol is not None else {}
+        return await self._safe_call(urgency, self._request_private, 'openOrders', params)
+
+    async def order_history(self, symbol: str, count: int = None, _from: int = None, urgency: int = 0) -> dict:
+        params = {'pair': symbol.lower()}
         if count is not None:
             params['count'] = count
         if _from is not None:
             params['from'] = _from
-        return await self._safe_call(self._request_private, 'orderHistory', params)
+        return await self._safe_call(urgency, self._request_private, 'orderHistory', params)
 
     async def stop(self):
         await self._session.close()
 
-    async def _safe_call(self, func, *args, **kwargs):
+    async def _safe_call(self, urgency: int, func, *args, **kwargs):
         tries = 10
         try:
             while 1:
                 try:
-                    return await func(*args, **kwargs)
+                    return await self._prioritize(urgency, self._throttle, func, *args, **kwargs)
                 except BaseException as e:
                     logger.warning(f'API call failed: {args} {kwargs}. Reason: {e}')
                     tries -= 1
@@ -91,45 +96,51 @@ class IndodaxAPI:
         except (asyncio.TimeoutError, self.Error):
             raise self.Error('Failed 10 times')
 
-    async def _throttle(self):
+    async def _prioritize(self, urgency: int, func, *args, **kwargs):
+        # give way to more urgent ones
+        for level in sorted(self._priority_locks.keys()):
+            if level >= urgency:
+                await self._priority_locks[level].acquire()
+        # do the stuff
+        result = await func(*args, **kwargs)
+        # now let other ones of same or lower urgency go through
+        for level in sorted(self._priority_locks.keys()):
+            if level >= urgency:
+                self._priority_locks[level].release()
+        return result
+
+    async def _throttle(self, func, *args, **kwargs):
         passed = time.time() - self._last_request_ts
         limit = 0.333  # rate limit is 180 requests/min
         if passed < limit:
             await asyncio.sleep(limit - passed)
-
-    async def _request_public(self, verb: str, endpoint: str, priority: int = 0):
-        # throttling
-        if priority > 0:
-            self._priority_pool[priority].append()
-        async with self._request_lock:
-            await self._throttle()
-            r = await self._request(verb, endpoint)
-            self._last_request_ts = time.time()
+        r = await func(*args, **kwargs)
+        self._last_request_ts = time.time()
         return r
 
-    async def _request_private(self, method: str, data: dict = None, priority: int = 0) -> dict:
+    async def _request_public(self, verb: str, endpoint: str):
+        return await self._request(verb, endpoint)
+
+    async def _request_private(self, method: str, data: dict = None) -> dict:
         if data is None:
             data = {}
-        # throttling
-        async with self._request_lock:
-            await self._throttle()
-            # preparing data
-            data = {
-                'method': method,
-                'timestamp': int(time.time() * 1000),
-                **data
-            }
-            query = urllib.parse.urlencode(data)
-            sig = hmac.new(self._api_secret.encode('utf8'), query.encode('utf8'), hashlib.sha512).hexdigest()
-            kwargs = {
-                'headers': {
-                    'Key': self._api_key,
-                    'Sign': sig
-                },
-                'data': data,
-            }
-            r = await self._request('post', 'tapi', **kwargs)
-            self._last_request_ts = time.time()
+        # preparing data
+        data = {
+            'method': method,
+            'timestamp': int(time.time() * 1000),
+            **data
+        }
+        query = urllib.parse.urlencode(data)
+        sig = hmac.new(self._api_secret.encode('utf8'), query.encode('utf8'), hashlib.sha512).hexdigest()
+        kwargs = {
+            'headers': {
+                'Key': self._api_key,
+                'Sign': sig
+            },
+            'data': data,
+        }
+        r = await self._request('post', 'tapi', **kwargs)
+        self._last_request_ts = time.time()
         try:
             if r['success']:
                 return r['return']
@@ -140,7 +151,7 @@ class IndodaxAPI:
 
     async def _request(self, verb, endpoint, **kwargs) -> dict:
         url = self._base_url + endpoint
-        # logger.info(f'Requesting {verb.upper()} {endpoint} {kwargs}')
+        logger.debug(f'Requesting {verb.upper()} {endpoint} {kwargs}')
         try:
             async with getattr(self._session, verb)(url, **kwargs) as response:
                 result = await self._handle_response(response)

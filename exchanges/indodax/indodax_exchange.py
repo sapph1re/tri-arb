@@ -57,14 +57,14 @@ class IndodaxExchange(BaseExchange):
             if order_type == 'LIMIT':
                 if side == 'BUY':
                     amount *= price
-                r = await self._api.create_order(symbol.lower(), side.lower(), str(price), str(amount))
+                r = await self._api.create_order(symbol.lower(), side.lower(), str(price), str(amount), urgency=1)
             elif order_type == 'MARKET':
                 if side == 'BUY':
                     price = self._orderbooks[symbol].get_best_ask() * 2
                     amount = self._orderbooks[symbol].estimate_market_buy_total(amount)
                 else:
                     price = self._orderbooks[symbol].get_best_bid() / 2
-                r = await self._api.create_order(symbol.lower(), side.lower(), str(price), str(amount))
+                r = await self._api.create_order(symbol.lower(), side.lower(), str(price), str(amount), urgency=1)
             else:
                 raise self.Error(f'Unsupported order type: {order_type}')
         except (IndodaxAPI.Error, IndodaxOrderbook.Error) as e:
@@ -73,7 +73,7 @@ class IndodaxExchange(BaseExchange):
 
     async def get_order_result(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
-            r = await self._api.order_info(symbol, int(order_id))
+            r = await self._api.order_info(symbol, int(order_id), urgency=1)
         except IndodaxAPI.Error as e:
             raise self.Error(f'Order info failed: {e.message}')
         return self._parse_order_result(symbol, r)
@@ -81,9 +81,9 @@ class IndodaxExchange(BaseExchange):
     async def cancel_order(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
             order_id = int(order_id)
-            r = await self._api.order_info(symbol, order_id)
-            r = await self._api.cancel_order(symbol, order_id, r['order']['type'])
-            r = await self._api.order_info(symbol, order_id)
+            r = await self._api.order_info(symbol, order_id, urgency=1)
+            r = await self._api.cancel_order(symbol, order_id, r['order']['type'], urgency=1)
+            r = await self._api.order_info(symbol, order_id, urgency=1)
         except IndodaxAPI.Error as e:
             raise self.Error(f'Cancel order failed: {e.message}')
         return self._parse_order_result(symbol, r)
