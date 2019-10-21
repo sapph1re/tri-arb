@@ -23,7 +23,6 @@ class Action:
         self.pair = pair
         self.base = pair[0]
         self.quote = pair[1]
-        self.symbol = (pair[0]+pair[1]).upper()
         self.side = side.upper()
         self.quantity = quantity
         self.price = price
@@ -58,6 +57,11 @@ class ActionSet:
 
 
 class ActionExecutor:
+
+    class Error(BaseException):
+        def __init__(self, message):
+            self.message = message
+
     def __init__(self, exchange: BaseExchange, actions: List[Action], detector: ArbitrageDetector = None,
                  arbitrage: Arbitrage = None, account_info: AccountInfo = None):
         self._exchange = exchange
@@ -77,9 +81,10 @@ class ActionExecutor:
             self._account_info = await AccountInfo.create(self._exchange)
 
         # prepare a set of actions for execution
-        action_set = self._get_executable_action_set()
-        if action_set is None:
-            logger.info('Cannot execute these actions')
+        try:
+            action_set = self._get_executable_action_set()
+        except self.Error as e:
+            logger.info(f'Cannot execute these actions: {e.message}')
             dispatcher.send(signal='execution_finished', sender=self)
             return
         logger.info(f'Executable action set:\n{action_set}')
@@ -148,15 +153,19 @@ class ActionExecutor:
                 results[idx] = result
                 # check how well they got filled
                 action = actions[idx]
-                if result.amount_executed == action.quantity:
+                # if result.amount_executed == action.quantity:
+                if result.status == 'FILLED':
                     logger.info(f'Action filled: {action}')
                     filled.append(idx)
-                elif 0 < result.amount_executed < action.quantity:
+                elif result.status == 'PARTIALLY_FILLED':
                     logger.info(f'Action partially filled for {result.amount_executed}: {action}')
                     unfilled.append(idx)
-                elif result.amount_executed == 0:
+                elif result.status == 'NEW':
                     logger.info(f'Action not filled: {action}')
                     unfilled.append(idx)
+                else:
+                    logger.info(f'Unexpected action result: {result.status}, '
+                                f'filled for {result.amount_executed}: {action}')
 
             # based on how many orders got filled, decide what we do next
             if len(filled) == len(actions):
@@ -217,13 +226,12 @@ class ActionExecutor:
         else:
             logger.error(f'Emergency action not filled: {action}. Status: {status}')
 
-    def _get_executable_action_set(self) -> ActionSet or None:
+    def _get_executable_action_set(self) -> ActionSet:
         actions = self._raw_action_list
         # logger.debug(f'Initial actions list: {actions}')
         # actions list is expected to be exactly three items long, in a triangle
         if len(actions) != 3:
-            logger.error(f'Number of actions is not 3: {actions}')
-            return None
+            raise self.Error(f'Number of actions is not 3: {actions}')
         # first rearrange actions in a sequence to pass funds along the sequence
         gain = []
         spend = []
@@ -241,8 +249,7 @@ class ActionExecutor:
             # sequence needs to be rearranged
             actions = [actions[0], actions[2], actions[1]]
         else:
-            logger.error(f'Bad actions list: not a valid triangle! Actions: {actions}')
-            return None
+            raise self.Error(f'Bad actions list: not a valid triangle! Actions: {actions}')
         # logger.debug(f'Sequenced actions list: {actions}')
         # then figure out which action to start with and rotate the sequence
         balance_props = []
@@ -260,9 +267,10 @@ class ActionExecutor:
                 asset = base
                 amount = quantity
             balance = self._account_info.get_balance(asset)
-            # logger.debug(f'{asset} balance: {balance:.8f}')
+            logger.debug(f'{asset} balance: {balance:.8f}')
             balance_props.append(balance / amount)
         prop_min, prop_mid, prop_max = sorted(balance_props)
+        logger.debug(f'Balance proportions: {balance_props}')
         idx_min = balance_props.index(prop_min)
         idx_mid = balance_props.index(prop_mid)
         idx_max = balance_props.index(prop_max)
@@ -295,7 +303,8 @@ class ActionExecutor:
                 [red_actions[1],],
                 [red_actions[2],],
             ])
-        return None
+        # no available balance
+        raise self.Error('No available balance')
 
     def _reduce_actions_by_proportion(self, actions: List[Action], proportion: Decimal) -> List[Action] or None:
         if proportion < 1:
@@ -309,7 +318,7 @@ class ActionExecutor:
                 reduce_factor=proportion
             )
             if reduced is None:
-                # logger.debug('Arbitrage is not available with reduced amounts')
+                logger.debug('Arbitrage is not available with reduced amounts')
                 return None
             # extract amounts from the reduced arbitrage
             for action in actions:
@@ -322,10 +331,11 @@ class ActionExecutor:
 
     async def _execute_action(self, action: Action) -> BaseExchange.OrderResult or None:
         try:
+            symbol = self._exchange.make_symbol(action.pair[0], action.pair[1])
             return await self._exchange.create_order(
-                symbol=action.symbol,
+                symbol=symbol,
                 side=action.side,
-                type=action.type,
+                order_type=action.type,
                 amount=action.quantity,
                 price=action.price,
             )
@@ -404,7 +414,8 @@ class ActionExecutor:
         return order_results
 
     def _revert_action(self, action: Action) -> Action:
-        amount_step = self._symbols_info[action.symbol]['amount_step']
+        symbol = self._exchange.make_symbol(action.pair[0], action.pair[1])
+        amount_step = self._symbols_info[symbol]['amount_step']
         amount_revert = (action.quantity * (1 - self._trade_fee)).quantize(amount_step, rounding=ROUND_DOWN)
         return Action(
             pair=action.pair,
@@ -461,7 +472,8 @@ class ActionExecutor:
         # revert what's been filled
         if amount_filled > 0:
             logger.info(f'Order has been filled for {amount_filled:f} {action.base}, it will be reverted')
-            amount_step = self._symbols_info[action.symbol]['amount_step']
+            symbol = self._exchange.make_symbol(action.pair[0], action.pair[1])
+            amount_step = self._symbols_info[symbol]['amount_step']
             amount_revert = (amount_filled * (1 - self._trade_fee)).quantize(amount_step, rounding=ROUND_DOWN)
             return [
                 Action(
@@ -480,7 +492,8 @@ class ActionExecutor:
         amount_filled = await self._cancel_order(ores)
         # finalize what's unfilled
         if amount_filled < action.quantity:
-            amount_step = self._symbols_info[action.symbol]['amount_step']
+            symbol = self._exchange.make_symbol(action.pair[0], action.pair[1])
+            amount_step = self._symbols_info[symbol]['amount_step']
             amount_to_finalize = (action.quantity - amount_filled).quantize(amount_step, rounding=ROUND_DOWN)
             logger.info(
                 f'Order has been filled for {amount_filled:f} {action.base}, '

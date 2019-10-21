@@ -46,7 +46,7 @@ class BaseExchange:
     def run_orderbooks(self, symbols: Dict[str, dict]) -> Dict[str, BaseOrderbook]:
         return {}
 
-    async def create_order(self, symbol: str, side: str, type: str,
+    async def create_order(self, symbol: str, side: str, order_type: str,
                            amount: Decimal, price: Decimal or None = None) -> OrderResult:
         # must return BaseExchange.OrderResult or raise BaseExchange.Error
         raise self.Error('Not implemented')

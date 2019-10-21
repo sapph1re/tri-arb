@@ -28,8 +28,8 @@ class IndodaxExchange(BaseExchange):
         except IndodaxAPI.Error as e:
             raise self.Error(f'Failed to load balances: {e.message}')
         balances = {
-            symbol: Decimal(balance)
-            for symbol, balance in r['balance'].items()
+            asset.upper(): Decimal(balance)
+            for asset, balance in r['balance'].items()
         }
         # update symbols info as well, as rates change an min total requirements changes as well
         await self._load_symbols_info()
@@ -56,15 +56,15 @@ class IndodaxExchange(BaseExchange):
         try:
             if order_type == 'LIMIT':
                 if side == 'BUY':
-                    amount /= price
-                r = await self._api.create_order(symbol, side.lower(), str(price), str(amount))
+                    amount *= price
+                r = await self._api.create_order(symbol.lower(), side.lower(), str(price), str(amount))
             elif order_type == 'MARKET':
                 if side == 'BUY':
                     price = self._orderbooks[symbol].get_best_ask() * 2
                     amount = self._orderbooks[symbol].estimate_market_buy_total(amount)
                 else:
                     price = self._orderbooks[symbol].get_best_bid() / 2
-                r = await self._api.create_order(symbol, side.lower(), str(price), str(amount))
+                r = await self._api.create_order(symbol.lower(), side.lower(), str(price), str(amount))
             else:
                 raise self.Error(f'Unsupported order type: {order_type}')
         except (IndodaxAPI.Error, IndodaxOrderbook.Error) as e:
@@ -91,7 +91,7 @@ class IndodaxExchange(BaseExchange):
     def _parse_order_result(self, symbol: str, result: dict) -> BaseExchange.OrderResult:
         side = result['order']['type'].upper()
         # figure out amounts
-        base, quote = symbol.split('_')
+        base, quote = symbol.lower().split('_')
         cur = quote if side == 'BUY' else base
         if cur == 'idr':
             cur = 'rp'

@@ -91,27 +91,45 @@ class IndodaxAPI:
         except (asyncio.TimeoutError, self.Error):
             raise self.Error('Failed 10 times')
 
-    async def _request_public(self, verb: str, endpoint: str):
-        return await self._request(verb, endpoint)
+    async def _throttle(self):
+        passed = time.time() - self._last_request_ts
+        limit = 0.333  # rate limit is 180 requests/min
+        if passed < limit:
+            await asyncio.sleep(limit - passed)
 
-    async def _request_private(self, method: str, data: dict = None) -> dict:
+    async def _request_public(self, verb: str, endpoint: str, priority: int = 0):
+        # throttling
+        if priority > 0:
+            self._priority_pool[priority].append()
+        async with self._request_lock:
+            await self._throttle()
+            r = await self._request(verb, endpoint)
+            self._last_request_ts = time.time()
+        return r
+
+    async def _request_private(self, method: str, data: dict = None, priority: int = 0) -> dict:
         if data is None:
             data = {}
-        data = {
-            'method': method,
-            'timestamp': int(time.time() * 1000),
-            **data
-        }
-        query = urllib.parse.urlencode(data)
-        sig = hmac.new(self._api_secret.encode('utf8'), query.encode('utf8'), hashlib.sha512).hexdigest()
-        kwargs = {
-            'headers': {
-                'Key': self._api_key,
-                'Sign': sig
-            },
-            'data': data,
-        }
-        r = await self._request('post', 'tapi', **kwargs)
+        # throttling
+        async with self._request_lock:
+            await self._throttle()
+            # preparing data
+            data = {
+                'method': method,
+                'timestamp': int(time.time() * 1000),
+                **data
+            }
+            query = urllib.parse.urlencode(data)
+            sig = hmac.new(self._api_secret.encode('utf8'), query.encode('utf8'), hashlib.sha512).hexdigest()
+            kwargs = {
+                'headers': {
+                    'Key': self._api_key,
+                    'Sign': sig
+                },
+                'data': data,
+            }
+            r = await self._request('post', 'tapi', **kwargs)
+            self._last_request_ts = time.time()
         try:
             if r['success']:
                 return r['return']
@@ -121,18 +139,13 @@ class IndodaxAPI:
             raise self.Error(f'Bad response: {r}')
 
     async def _request(self, verb, endpoint, **kwargs) -> dict:
-        async with self._request_lock:
-            passed = time.time() - self._last_request_ts
-            limit = 0.333   # rate limit is 180 requests/min
-            if passed < limit:
-                await asyncio.sleep(limit - passed)
-            url = self._base_url + endpoint
-            try:
-                async with getattr(self._session, verb)(url, **kwargs) as response:
-                    result = await self._handle_response(response)
-            except ClientError as e:
-                raise self.Error(str(e))
-            self._last_request_ts = time.time()
+        url = self._base_url + endpoint
+        # logger.info(f'Requesting {verb.upper()} {endpoint} {kwargs}')
+        try:
+            async with getattr(self._session, verb)(url, **kwargs) as response:
+                result = await self._handle_response(response)
+        except ClientError as e:
+            raise self.Error(str(e))
         return result
 
     async def _handle_response(self, response: aiohttp.ClientResponse) -> dict:
@@ -161,7 +174,7 @@ async def main():
     print(await api.order_info('btc_idr', oid))
     print(await api.cancel_order('btc_idr', oid, 'sell'))
 
-    r = await api.create_order('btc_idr', 'buy', '500000000', '50000')
+    r = await api.create_order('btc_idr', 'buy', '5000000', '50000')
     print(r)
     oid = r['order_id']
     print(await api.order_info('btc_idr', oid))

@@ -79,8 +79,8 @@ class ArbitrageDetector:
         symbols_info = self._exchange.get_symbols_info()
         self._triangles = self._make_triangles(symbols_info)
         self._triangles, self._symbols = self._verify_triangles(self._triangles)
-        # logger.debug(f'Triangles: {self.triangles}')
-        # logger.debug(f'Symbols: {self.symbols}')
+        # logger.info(f'Triangles: {self._triangles}')
+        # logger.info(f'Symbols: {self._symbols}')
 
         # order amount requirements
         self._symbol_reqs = {}
@@ -406,9 +406,9 @@ class ArbitrageDetector:
             direction = 'buy sell buy'
             amounts['x_buy'] = arb.actions[2].amount
             amounts['x_sell'] = arb.actions[1].amount
-        yz = ''.join(arb.actions[0].pair)
-        xz = ''.join(arb.actions[1].pair)
-        xy = ''.join(arb.actions[2].pair)
+        yz = self._exchange.make_symbol(arb.actions[0].pair[0], arb.actions[0].pair[1])
+        xz = self._exchange.make_symbol(arb.actions[1].pair[0], arb.actions[1].pair[1])
+        xy = self._exchange.make_symbol(arb.actions[2].pair[0], arb.actions[2].pair[1])
         # logger.debug(f'Amounts before reduction: {amounts}')
         new_amounts = self.limit_amounts(amounts, reduce_factor)
         # logger.debug(f'Amounts reduced: {new_amounts}')

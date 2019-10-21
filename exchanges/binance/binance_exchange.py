@@ -61,17 +61,17 @@ class BinanceExchange(BaseExchange):
             ws.start()
         return orderbooks
 
-    async def create_order(self, symbol: str, side: str, type: str, amount: Decimal,
+    async def create_order(self, symbol: str, side: str, order_type: str, amount: Decimal,
                            price: Decimal or None = None) -> BaseExchange.OrderResult:
         if side not in ['BUY', 'SELL']:
             raise self.Error('Bad side')
-        if type not in ['LIMIT', 'MARKET']:
+        if order_type not in ['LIMIT', 'MARKET']:
             raise self.Error('Bad order type')
         try:
             r = await self._api.create_order(
                 symbol=symbol,
                 side=side,
-                order_type=type,
+                order_type=order_type,
                 quantity=f'{amount:f}',
                 price=None if price is None else f'{price:f}',
             )
