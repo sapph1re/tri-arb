@@ -102,11 +102,13 @@ class IndodaxAPI:
             if level >= urgency:
                 await self._priority_locks[level].acquire()
         # do the stuff
-        result = await func(*args, **kwargs)
-        # now let other ones of same or lower urgency go through
-        for level in sorted(self._priority_locks.keys()):
-            if level >= urgency:
-                self._priority_locks[level].release()
+        try:
+            result = await func(*args, **kwargs)
+        finally:
+            # now let other ones of same or lower urgency go through
+            for level in sorted(self._priority_locks.keys()):
+                if level >= urgency:
+                    self._priority_locks[level].release()
         return result
 
     async def _throttle(self, func, *args, **kwargs):
@@ -151,7 +153,7 @@ class IndodaxAPI:
 
     async def _request(self, verb, endpoint, **kwargs) -> dict:
         url = self._base_url + endpoint
-        logger.debug(f'Requesting {verb.upper()} {endpoint} {kwargs}')
+        # logger.debug(f'Requesting {verb.upper()} {endpoint} {kwargs}')
         try:
             async with getattr(self._session, verb)(url, **kwargs) as response:
                 result = await self._handle_response(response)
