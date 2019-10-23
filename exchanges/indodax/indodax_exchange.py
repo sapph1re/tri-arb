@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_UP
+from decimal import Decimal, DivisionByZero, ROUND_UP
 from typing import Dict
 from exchanges.base_exchange import BaseExchange
 from exchanges.base_orderbook import BaseOrderbook
@@ -126,11 +126,11 @@ class IndodaxExchange(BaseExchange):
 
     async def _load_symbols_info(self):
         r = await self._api.tickers()
-        symbols = {
+        last_prices = {
             symbol.upper(): Decimal(details['last'])
             for symbol, details in r['tickers'].items()
         }
-        for symbol, last_price in symbols.items():
+        for symbol, last_price in last_prices.items():
             base, quote = symbol.split('_')
             # minimal order size is equivalent of 50k IDR on all pairs
             min_idr = Decimal('50000')
@@ -140,11 +140,15 @@ class IndodaxExchange(BaseExchange):
                     min_total = min_idr
                 else:
                     quote_symbol = f'{quote}_IDR'
-                    last_price_quote = symbols[quote_symbol]
+                    last_price_quote = last_prices[quote_symbol]
                     min_total = (min_idr / last_price_quote).quantize(amount_step, rounding=ROUND_UP)
                 min_amount = (min_total / last_price).quantize(amount_step, rounding=ROUND_UP)
+            except DivisionByZero:
+                # if last price is empty, skip it
+                logger.info(f'Failed to load {symbol} info, last price is empty')
+                continue
             except IndodaxOrderbook.Error as e:
-                # if orderbook is empty, we just skip it
+                # if orderbook is empty, skip it
                 logger.info(f'Failed to load {symbol} info: {e.message}')
                 continue
             max_amount = Decimal('Inf')
