@@ -1,0 +1,7 @@
+aiohttp
+requests
+dateparser
+websockets
+websocket_client
+sortedcontainers
+PyDispatcher

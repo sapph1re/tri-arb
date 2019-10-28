@@ -1,6 +1,5 @@
 .idea/
 __pycache__/
 ob_*/
-*.txt
 *.log
 *.ini
