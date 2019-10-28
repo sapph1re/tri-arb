@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Dict
+from typing import Dict, Tuple
 from .base_orderbook import BaseOrderbook
 
 
@@ -57,4 +57,8 @@ class BaseExchange:
 
     async def cancel_order(self, symbol: str, order_id: str) -> OrderResult:
         # must return BaseExchange.OrderResult or raise BaseExchange.Error
+        raise self.Error('Not implemented')
+
+    async def measure_ping(self) -> Tuple[int, int, int]:
+        # must return min, max, avg ping in milliseconds or raise BaseExchange.Error
         raise self.Error('Not implemented')

@@ -1,5 +1,6 @@
+import time
 import asyncio
-from typing import List
+from typing import List, Tuple
 from .binance.client import AsyncClient
 from .binance.exceptions import BinanceAPIException
 from logger import get_logger
@@ -374,6 +375,19 @@ class BinanceAPI:
         except LookupError:
             raise self.Error('Failed to load symbols')
         return symbols_info
+
+    async def measure_ping(self) -> Tuple[int, int, int]:
+        pings = [
+            await self._measure_ping_once()
+            for i in range(10)
+        ]
+        avg = int(sum(pings) / len(pings))
+        return min(pings), max(pings), avg
+
+    async def _measure_ping_once(self) -> int:
+        t = time.time()
+        await self._client.get_account()
+        return int((time.time() - t)*1000)
 
 
 async def main():

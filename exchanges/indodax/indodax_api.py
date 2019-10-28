@@ -4,6 +4,7 @@ import time
 import hashlib
 import hmac
 import urllib.parse
+from typing import Tuple
 from aiohttp.client_exceptions import ClientError
 from logger import get_logger
 logger = get_logger(__name__)
@@ -76,10 +77,19 @@ class IndodaxAPI:
             params['from'] = _from
         return await self._safe_call(urgency, self._request_private, 'orderHistory', params)
 
+    async def measure_ping(self) -> Tuple[int, int, int]:
+        pings = [
+            await self._throttle(self._measure_ping_once)
+            for i in range(10)
+        ]
+        avg = int(sum(pings) / len(pings))
+        return min(pings), max(pings), avg
+
     async def stop(self):
         await self._session.close()
 
     async def _safe_call(self, urgency: int, func, *args, **kwargs):
+        # prioritizes, throttles, retries on error
         tries = 10
         try:
             while 1:
@@ -119,6 +129,11 @@ class IndodaxAPI:
         r = await func(*args, **kwargs)
         self._last_request_ts = time.time()
         return r
+
+    async def _measure_ping_once(self) -> int:
+        t = time.time()
+        await self._request_private('getInfo')
+        return int((time.time() - t)*1000)
 
     async def _request_public(self, verb: str, endpoint: str):
         return await self._request(verb, endpoint)

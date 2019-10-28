@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Dict
+from typing import Dict, Tuple
 from exchanges.base_exchange import BaseExchange
 from exchanges.base_orderbook import BaseOrderbook
 from .binance_api import BinanceAPI
@@ -92,6 +92,12 @@ class BinanceExchange(BaseExchange):
             return self._parse_order_result(r)
         except BinanceAPI.Error as e:
             raise self.Error(e.message)
+
+    async def measure_ping(self) -> Tuple[int, int, int]:
+        try:
+            return await self._api.measure_ping()
+        except BinanceAPI.Error as e:
+            raise self.Error(f'Failed to measure ping: {e.message}')
 
     def _parse_order_result(self, result: dict) -> BaseExchange.OrderResult:
         status = result['status']

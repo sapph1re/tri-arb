@@ -1,5 +1,5 @@
 from decimal import Decimal, DivisionByZero, ROUND_UP
-from typing import Dict
+from typing import Dict, Tuple
 from exchanges.base_exchange import BaseExchange
 from exchanges.base_orderbook import BaseOrderbook
 from .indodax_api import IndodaxAPI
@@ -87,6 +87,12 @@ class IndodaxExchange(BaseExchange):
         except IndodaxAPI.Error as e:
             raise self.Error(f'Cancel order failed: {e.message}')
         return self._parse_order_result(symbol, r)
+
+    async def measure_ping(self) -> Tuple[int, int, int]:
+        try:
+            return await self._api.measure_ping()
+        except IndodaxAPI.Error as e:
+            raise self.Error(f'Failed to measure ping: {e.message}')
 
     def _parse_order_result(self, symbol: str, result: dict) -> BaseExchange.OrderResult:
         side = result['order']['type'].upper()
