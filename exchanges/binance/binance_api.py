@@ -384,6 +384,9 @@ class BinanceAPI:
         avg = int(sum(pings) / len(pings))
         return min(pings), max(pings), avg
 
+    async def stop(self):
+        await self._client.session.close()
+
     async def _measure_ping_once(self) -> int:
         t = time.time()
         await self._client.get_account()

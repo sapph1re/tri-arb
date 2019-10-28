@@ -99,6 +99,9 @@ class BinanceExchange(BaseExchange):
         except BinanceAPI.Error as e:
             raise self.Error(f'Failed to measure ping: {e.message}')
 
+    async def stop(self):
+        await self._api.stop()
+
     def _parse_order_result(self, result: dict) -> BaseExchange.OrderResult:
         status = result['status']
         if status == 'CANCELED':

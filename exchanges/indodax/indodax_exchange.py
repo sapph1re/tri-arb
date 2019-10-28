@@ -94,6 +94,9 @@ class IndodaxExchange(BaseExchange):
         except IndodaxAPI.Error as e:
             raise self.Error(f'Failed to measure ping: {e.message}')
 
+    async def stop(self):
+        await self._api.stop()
+
     def _parse_order_result(self, symbol: str, result: dict) -> BaseExchange.OrderResult:
         side = result['order']['type'].upper()
         # figure out amounts

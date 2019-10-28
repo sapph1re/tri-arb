@@ -62,3 +62,7 @@ class BaseExchange:
     async def measure_ping(self) -> Tuple[int, int, int]:
         # must return min, max, avg ping in milliseconds or raise BaseExchange.Error
         raise self.Error('Not implemented')
+
+    async def stop(self):
+        # graceful stop, if needed
+        return

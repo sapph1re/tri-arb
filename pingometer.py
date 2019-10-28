@@ -12,6 +12,7 @@ async def main():
     )
     pmin, pmax, pavg = await exchange.measure_ping()
     print(f'Ping: min {pmin} ms, max {pmax} ms, avg {pavg} ms')
+    await exchange.stop()
 
 
 if __name__ == '__main__':
