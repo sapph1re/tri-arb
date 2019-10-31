@@ -124,7 +124,8 @@ class IndodaxAPI:
 
     async def _throttle(self, func, *args, **kwargs):
         passed = time.time() - self._last_request_ts
-        limit = 0.333  # rate limit is 180 requests/min
+        # limit = 0.333  # rate limit is 180 requests/min
+        limit = 0.01    # they said no rate limit for me, but let's stay at 100 requests/sec
         if passed < limit:
             await asyncio.sleep(limit - passed)
         r = await func(*args, **kwargs)
