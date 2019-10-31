@@ -17,7 +17,8 @@ class IndodaxAPI:
             self.message = message
 
     def __init__(self, api_key: str, api_secret: str):
-        self._base_url = 'https://indodax.com/'
+        # self._base_url = 'https://indodax.com/'   # regular API url
+        self._base_url = 'https://btcapi.net/'  # no-rate-limit API url
         self._api_key = api_key
         self._api_secret = api_secret
         loop = asyncio.get_event_loop()
