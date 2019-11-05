@@ -5,3 +5,5 @@ websockets
 websocket_client
 sortedcontainers
 PyDispatcher
+peewee
+mysqlclient

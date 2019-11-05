@@ -130,6 +130,7 @@ class IndodaxExchange(BaseExchange):
             price=price,
             amount_original=amt_orig,
             amount_executed=(amt_orig - amt_left),
+            amount_quote=None,  # we can't know it, Indodax API doesn't provide this yet
             status=status
         )
 

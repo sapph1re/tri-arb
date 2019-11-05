@@ -7,14 +7,18 @@ class BaseExchange:
 
     class OrderResult:
         def __init__(self, symbol: str, order_id: str, side: str, price: Decimal or None,
-                     amount_original: Decimal, amount_executed: Decimal, status: str):
+                     amount_original: Decimal, amount_executed: Decimal, amount_quote: Decimal or None,
+                     status: str, placed_at: int = 0, done_at: int = 0):
             self.symbol = symbol
             self.order_id = order_id
             self.side = side    # BUY, SELL
             self.price = price
             self.amount_original = amount_original
             self.amount_executed = amount_executed
+            self.amount_quote = amount_quote
             self.status = status    # NEW, PARTIALLY_FILLED, FILLED, CANCELLED, OTHER
+            self.placed_at = placed_at  # timestamp in milliseconds
+            self.done_at = done_at  # timestamp in milliseconds
 
     class Error(BaseException):
         def __init__(self, message):

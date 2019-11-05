@@ -108,6 +108,9 @@ class BinanceExchange(BaseExchange):
             status = 'CANCELLED'
         if status not in ['NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCELLED']:
             status = 'OTHER'
+        amt_quote = Decimal(result['cummulativeQuoteQty'])
+        if amt_quote < 0:
+            amt_quote = None
         return BaseExchange.OrderResult(
             symbol=result['symbol'],
             order_id=result['orderId'],
@@ -115,6 +118,7 @@ class BinanceExchange(BaseExchange):
             price=Decimal(result['price']),
             amount_original=Decimal(result['origQty']),
             amount_executed=Decimal(result['executedQty']),
+            amount_quote=amt_quote,
             status=status
         )
 

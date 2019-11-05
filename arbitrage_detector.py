@@ -28,7 +28,7 @@ class MarketAction:
 class Arbitrage:
     def __init__(
             self, actions, currency_z, amount_z, profit_z, profit_z_rel,
-            profit_x, currency_x, profit_y, currency_y, orderbooks
+            profit_x, currency_x, profit_y, currency_y, orderbooks, ts
     ):
         self.actions = actions
         self.currency_z = currency_z
@@ -40,6 +40,7 @@ class Arbitrage:
         self.profit_x = profit_x
         self.currency_x = currency_x
         self.orderbooks = orderbooks
+        self.ts = ts
 
     def __str__(self):
         actions_str = ' -> '.join([str(action) for action in self.actions])
@@ -443,7 +444,8 @@ class ArbitrageDetector:
             currency_y=arb.currency_y,
             profit_x=normalized['x_profit'],
             currency_x=arb.currency_x,
-            orderbooks=arb.orderbooks
+            orderbooks=arb.orderbooks,
+            ts=arb.ts
         )
 
     def find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
@@ -578,7 +580,8 @@ class ArbitrageDetector:
                         currency_y=currency_y,
                         profit_x=normalized['x_profit'],
                         currency_x=currency_x,
-                        orderbooks=orderbooks
+                        orderbooks=orderbooks,
+                        ts=int(time.time() * 1000)
                     )
 
         # checking triangle in another direction: buy Y/Z, sell X/Z, buy X/Y
@@ -662,7 +665,8 @@ class ArbitrageDetector:
                         currency_y=currency_y,
                         profit_x=normalized['x_profit'],
                         currency_x=currency_x,
-                        orderbooks=orderbooks
+                        orderbooks=orderbooks,
+                        ts=int(time.time() * 1000)
                     )
 
         # no arbitrage found

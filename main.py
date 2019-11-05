@@ -5,6 +5,7 @@ from account_info import AccountInfo
 from exchanges.base_exchange import BaseExchange
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from action_executor import ActionExecutor, Action
+from aftermath import Aftermath
 from logger import get_logger
 logger = get_logger(__name__)
 
@@ -34,9 +35,17 @@ class TriangularArbitrage:
         acc = await AccountInfo.create(exchange, auto_update_interval=10)
         return cls(exchange, acc)
 
-    def _on_arbitrage_processed(self, sender):
+    def _on_aftermath_done(self, sender: Aftermath):
+        logger.info('Aftermath done')
+
+    def _on_arbitrage_processed(self, sender: ActionExecutor):
         logger.info('Arbitrage processed')
         self._is_processing = False
+        actions = sender.get_raw_action_list()
+        result = sender.get_result()
+        aftermath = Aftermath(self._exchange, actions, result)
+        dispatcher.connect(self._on_aftermath_done, signal='aftermath_done', sender=aftermath)
+        asyncio.ensure_future(aftermath.run())
 
     def _process_arbitrage(self, arb: Arbitrage):
         if self._is_processing:

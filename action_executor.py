@@ -9,7 +9,6 @@ from exchanges.base_exchange import BaseExchange
 from account_info import AccountInfo
 from arbitrage_detector import ArbitrageDetector, Arbitrage
 from logger import get_logger
-
 logger = get_logger(__name__)
 
 
@@ -62,6 +61,14 @@ class ActionExecutor:
         def __init__(self, message):
             self.message = message
 
+    class Result:
+        def __init__(self, parallels: int, scenario: str, order_results: list, action_orders: list, timings: dict):
+            self.parallels = parallels
+            self.scenario = scenario
+            self.order_results = order_results
+            self.action_orders = action_orders
+            self.timings = timings
+
     def __init__(self, exchange: BaseExchange, actions: List[Action], detector: ArbitrageDetector = None,
                  arbitrage: Arbitrage = None, account_info: AccountInfo = None):
         self._exchange = exchange
@@ -74,6 +81,15 @@ class ActionExecutor:
         self._min_fill_time = config.getint('Arbitrage', 'MinFillTime')
         self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast')
         self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime')
+        self._result = None
+        self._orders_executed = []
+        self._action_orders = []
+        self._timings = {
+            'all_placed': -1,
+            'orders_placed': [-1, -1, -1],
+            'orders_done': [-1, -1, -1],
+            'completed': -1
+        }
 
     async def run(self):
         # init account info if it hasn't been passed from above
@@ -89,6 +105,8 @@ class ActionExecutor:
             return
         logger.info(f'Executable action set:\n{action_set}')
 
+        scenario = ''
+
         # emergency actions in case of any failures
         emergency_actions = []
 
@@ -101,9 +119,9 @@ class ActionExecutor:
             # check whether the orders were placed successfully
             failed = []
             placed = []
-            for idx, result in enumerate(results):
+            for idx, ores in enumerate(results):
                 action = actions[idx]
-                if result is None:
+                if ores is None:
                     # order creation failed
                     logger.error(f'Failed to place an order! Failed action: {action}')
                     failed.append(idx)
@@ -112,23 +130,27 @@ class ActionExecutor:
                     placed.append(idx)
             if len(failed) == 0:
                 logger.info('All actions at this step placed orders successfully')
+                # shall proceed to filling
             elif len(failed) == len(actions):
                 logger.info('All actions at this step have failed')
                 if step == 0:
                     logger.info('Aborting')
+                    scenario = 'failed'
                 elif step == 1 and len(action_set.steps) == 3:
                     logger.info('Step 1 will be reverted')
                     emergency_actions.append(self._revert_action(action_set.steps[0][0]))
+                    scenario = 'reverted 1'
                 else:
                     logger.info('Last step failed, it will be finalized')
                     emergency_actions.append(self._finalize_action(actions[failed[0]]))
+                    scenario = 'finalized'
                 break
             elif len(failed) == 1 and len(actions) == 2:
                 # 1 of 2 failed
                 logger.info('1 of 2 parallel actions has failed, cancelling and reverting the other one')
-                emergency_actions.extend(
-                    await self._cancel_and_revert(results[placed[0]], actions[placed[0]])
-                )
+                to_revert = await self._cancel_and_revert(results[placed[0]], actions[placed[0]])
+                emergency_actions.extend(to_revert)
+                scenario = 'reverted 1' if len(to_revert) > 0 else 'failed'
                 break
             elif len(failed) == 1 and len(actions) == 3:
                 # 1 of 3 failed
@@ -137,78 +159,157 @@ class ActionExecutor:
             elif len(failed) == 2 and len(actions) == 3:
                 # 2 of 3 failed
                 logger.info('2 of 3 parallel actions have failed, cancelling and reverting the 3rd one')
-                emergency_actions.extend(
-                    await self._cancel_and_revert(results[placed[0]], actions[placed[0]])
-                )
+                to_revert = await self._cancel_and_revert(results[placed[0]], actions[placed[0]])
+                emergency_actions.extend(to_revert)
+                scenario = 'reverted 1' if len(to_revert) > 0 else 'failed'
+                break
+
+            if step + 1 == len(action_set.steps):
+                # last step has placed its orders
+                self._timings['all_placed'] = int(time.time() * 1000) - self._arbitrage.ts
 
             # wait for the orders to get filled
             filled = []
             unfilled = []
             min_filling_time = self._min_fill_time_last if step == len(action_set.steps) - 1 else self._min_fill_time
             placed_results = [results[idx] for idx in placed]
+            for pres in placed_results:
+                self._action_orders.append((pres.symbol, pres.order_id))
             placed_results = await self._wait_all_to_fill(placed_results, min_filling_time, self._max_fill_time)
-            for i, result in enumerate(placed_results):
+            for i, ores in enumerate(placed_results):
                 idx = placed[i]
                 # update order results in our main results list
-                results[idx] = result
+                results[idx] = ores
                 # check how well they got filled
                 action = actions[idx]
                 # if result.amount_executed == action.quantity:
-                if result.status == 'FILLED':
+                if ores.status == 'FILLED':
                     logger.info(f'Action filled: {action}')
                     filled.append(idx)
-                elif result.status == 'PARTIALLY_FILLED':
-                    logger.info(f'Action partially filled for {result.amount_executed}: {action}')
+                elif ores.status == 'PARTIALLY_FILLED':
+                    logger.info(f'Action partially filled for {ores.amount_executed}: {action}')
                     unfilled.append(idx)
-                elif result.status == 'NEW':
+                elif ores.status == 'NEW':
                     logger.info(f'Action not filled: {action}')
                     unfilled.append(idx)
                 else:
-                    logger.info(f'Unexpected action result: {result.status}, '
-                                f'filled for {result.amount_executed}: {action}')
+                    logger.info(f'Unexpected action result: {ores.status}, '
+                                f'filled for {ores.amount_executed}: {action}')
+                # timing if it's filled already
+                if ores.done_at > 0:
+                    self._set_done_timing(ores, ores.done_at)
 
             # based on how many orders got filled, decide what we do next
             if len(filled) == len(actions):
                 logger.info('All actions got filled, perfect!')
+                # shall continue to next steps if any
             elif len(filled) == 0:
                 logger.info('None of the actions got filled')
                 if step == 0:
                     logger.info('First step failed, cancelling and reverting...')
+                    to_revert = []
                     for idx in unfilled:
-                        emergency_actions.extend(await self._cancel_and_revert(results[idx], actions[idx]))
+                        # cancel
+                        to_revert.extend(await self._cancel_and_revert(results[idx], actions[idx]))
+                        # timing
+                        self._set_done_timing(results[idx])
+                    # revert
+                    emergency_actions.extend(to_revert)
+                    scenario = f'reverted {len(to_revert)}' if len(to_revert) > 0 else 'unfilled'
                 elif step == 1 and len(action_set.steps) == 3:
                     logger.info('Step 2/3 failed, cancelling and reverting step 2...')
                     idx = unfilled[0]
-                    emergency_actions.extend(await self._cancel_and_revert(results[idx], actions[idx]))
+                    # cancel
+                    to_revert = await self._cancel_and_revert(results[idx], actions[idx])
+                    # timing
+                    self._set_done_timing(results[idx])
+                    # revert
+                    emergency_actions.extend(to_revert)
                     logger.info('And reverting step 1...')
                     emergency_actions.append(self._revert_action(action_set.steps[0][0]))
+                    scenario = 'reverted 2' if len(to_revert) > 0 else 'reverted 1'
                 else:
                     logger.info('Last step failed, it will be finalized')
+                    to_finalize = []
                     for idx in unfilled:
-                        emergency_actions.extend(await self._cancel_and_finalize(results[idx], actions[idx]))
+                        # cancel
+                        to_finalize.extend(await self._cancel_and_finalize(results[idx], actions[idx]))
+                        # timing
+                        self._set_done_timing(results[idx])
+                    # finalize
+                    emergency_actions.extend(to_finalize)
+                    scenario = 'finalized' if len(to_finalize) > 0 else 'normal'
                 break
             elif len(filled) == 1 and len(actions) > 1:
                 logger.info(f'1/{len(actions)} actions got filled, cancelling and reverting...')
                 # cancel & revert the unfilled ones
+                to_revert = []
                 for idx in unfilled:
-                    emergency_actions.extend(await self._cancel_and_revert(results[idx], actions[idx]))
-                # and revert the filled one
-                emergency_actions.append(self._revert_action(actions[filled[0]]))
+                    # cancel
+                    to_revert.extend(await self._cancel_and_revert(results[idx], actions[idx]))
+                    # timing
+                    self._set_done_timing(results[idx])
+                # and revert if anything filled and revert the filled other one
+                to_revert.append(self._revert_action(actions[filled[0]]))
+                emergency_actions.extend(to_revert)
+                scenario = f'reverted {len(to_revert)}'
                 break
             elif len(filled) == 2 and len(actions) == 3:
                 logger.info(f'2/3 actions got filled, the last action will be finalized')
                 if len(unfilled) > 0:
                     idx = unfilled[0]
-                    emergency_actions.extend(await self._cancel_and_finalize(results[idx], actions[idx]))
+                    # cancel
+                    to_finalize = await self._cancel_and_finalize(results[idx], actions[idx])
+                    # timing
+                    self._set_done_timing(results[idx])
+                    # finalize
+                    emergency_actions.extend(to_finalize)
+                    scenario = 'finalized' if len(to_finalize) > 0 else 'normal'
                 else:
                     idx = failed[0]
                     emergency_actions.append(self._finalize_action(actions[idx]))
+                    scenario = 'finalized'
+                break
+
+        # scenario not set means the loop above did not break and all orders got filled normally
+        if scenario == '':
+            scenario = 'normal'
+
+        # measure timings
+        for ores in self._orders_executed:
+            placed_in = ores.placed_at - self._arbitrage.ts
+            j = self._action_orders.index((ores.symbol, ores.order_id))
+            self._timings['orders_placed'][j] = placed_in
 
         # perform emergency actions
         for action in emergency_actions:
             await self._execute_emergency_action(action)
 
+        self._timings['completed'] = int(time.time() * 1000) - self._arbitrage.ts
+
+        # summarize arbitrage execution results
+        self._result = self.Result(
+            parallels=len(action_set.steps[0]),
+            scenario=scenario,
+            order_results=self._orders_executed,
+            action_orders=self._action_orders,
+            timings=self._timings
+        )
+
         dispatcher.send(signal='execution_finished', sender=self)
+
+    def get_result(self):
+        return self._result
+
+    def get_raw_action_list(self):
+        return self._raw_action_list
+
+    def _set_done_timing(self, ores: BaseExchange.OrderResult, done_at: int = 0):
+        if done_at == 0:
+            done_at = int(time.time() * 1000)
+        j = self._action_orders.index((ores.symbol, ores.order_id))
+        done_in = done_at - (self._arbitrage.ts + self._timings['orders_placed'][j])
+        self._timings['orders_done'][j] = done_in
 
     async def _execute_emergency_action(self, action):
         logger.info(f'Executing emergency action: {action}...')
@@ -332,13 +433,16 @@ class ActionExecutor:
     async def _execute_action(self, action: Action) -> BaseExchange.OrderResult or None:
         try:
             symbol = self._exchange.make_symbol(action.pair[0], action.pair[1])
-            return await self._exchange.create_order(
+            ores = await self._exchange.create_order(
                 symbol=symbol,
                 side=action.side,
                 order_type=action.type,
                 amount=action.quantity,
                 price=action.price,
             )
+            ores.placed_at = int(time.time() * 1000)
+            self._orders_executed.append(ores)
+            return ores
         except BaseExchange.Error as e:
             logger.error(f'Action failed: {action}. Reason: {e.message}')
             return None
@@ -394,6 +498,8 @@ class ActionExecutor:
                         )
                         break
                 await asyncio.sleep(config.getint('Arbitrage', 'CheckOrderInterval'))
+        if ores.status == 'FILLED':
+            ores.done_at = int(time.time() * 1000)
         return ores
 
     async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
@@ -405,7 +511,10 @@ class ActionExecutor:
         # check each order's result one more time, as it may have changed after waiting
         for old_r in old_results:
             try:
-                new_r = await self._exchange.get_order_result(old_r.symbol, old_r.order_id)
+                if old_r.status in ['NEW', 'PARTIALLY_FILLED']:
+                    new_r = await self._exchange.get_order_result(old_r.symbol, old_r.order_id)
+                else:
+                    new_r = old_r
             except BaseExchange.Error as e:
                 logger.error(f'Failed to get order info, order: {old_r.symbol}:{old_r.order_id}, error: {e.message}')
                 order_results.append(old_r)
