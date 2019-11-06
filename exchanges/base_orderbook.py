@@ -43,3 +43,7 @@ class BaseOrderbook:
                     logger.warning(f'Price is missing in {self._symbol} asks: {price}')
             self._asks_changed = False
         return self._asks_list_cached.copy()
+
+    def stop(self):
+        # graceful stop, if needed
+        return

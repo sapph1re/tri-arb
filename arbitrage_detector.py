@@ -94,8 +94,89 @@ class ArbitrageDetector:
             }
 
         # start watching the orderbooks
-        dispatcher_connect_threadsafe(self.on_orderbook_changed, signal='orderbook_changed', sender=dispatcher.Any)
+        self._disconnect_from_orderbook = dispatcher_connect_threadsafe(
+            self._on_orderbook_changed, signal='orderbook_changed', sender=dispatcher.Any
+        )
         self._orderbooks = self._exchange.run_orderbooks(self._symbols)
+
+    def stop(self):
+        self._disconnect_from_orderbook()
+        for sym, ob in self._orderbooks.items():
+            ob.stop()
+
+    def reduce_arbitrage(self, arb: Arbitrage, reduce_factor: Decimal) -> Arbitrage or None:
+        """
+        Reduces amounts of a given arbitrage by a given factor
+        :param arb: initial arbitrage
+        :param reduce_factor: the multiplier
+        :return: new arbitrage (only amounts are changed) or None if there is no arbitrage
+        available with lower amounts
+        """
+        amounts = {
+            'y': arb.actions[0].amount,
+            'z_spend': arb.amount_z,
+            'z_profit': arb.profit_z
+        }
+        # we assume here that it's either "sell buy sell" or "buy sell buy"
+        # exactly in the YZ, XZ, XY sequence
+        if arb.actions[0].action == 'sell':
+            direction = 'sell buy sell'
+            amounts['x_buy'] = arb.actions[1].amount
+            amounts['x_sell'] = arb.actions[2].amount
+        else:
+            direction = 'buy sell buy'
+            amounts['x_buy'] = arb.actions[2].amount
+            amounts['x_sell'] = arb.actions[1].amount
+        yz = self._exchange.make_symbol(arb.actions[0].pair[0], arb.actions[0].pair[1])
+        xz = self._exchange.make_symbol(arb.actions[1].pair[0], arb.actions[1].pair[1])
+        xy = self._exchange.make_symbol(arb.actions[2].pair[0], arb.actions[2].pair[1])
+        # logger.debug(f'Amounts before reduction: {amounts}')
+        new_amounts = self._limit_amounts(amounts, reduce_factor)
+        # logger.debug(f'Amounts reduced: {new_amounts}')
+        normalized = self._normalize_amounts_and_recalculate(
+            symbols=(yz, xz, xy),
+            direction=direction,
+            amounts=new_amounts,
+            prices=(arb.actions[0].price, arb.actions[1].price, arb.actions[2].price),
+            orderbooks=arb.orderbooks
+        )
+        if normalized is None:
+            logger.debug('No reduced arbitrage available')
+            return None
+        # logger.debug(f'Reduced amounts normalized and recalculated: {normalized}')
+        if direction == 'sell buy sell':
+            new_actions = [
+                MarketAction(arb.actions[0].pair, 'sell', arb.actions[0].price, normalized['y']),
+                MarketAction(arb.actions[1].pair, 'buy', arb.actions[1].price, normalized['x_buy']),
+                MarketAction(arb.actions[2].pair, 'sell', arb.actions[2].price, normalized['x_sell'])
+            ]
+        else:  # buy sell buy
+            new_actions = [
+                MarketAction(arb.actions[0].pair, 'buy', arb.actions[0].price, normalized['y']),
+                MarketAction(arb.actions[1].pair, 'sell', arb.actions[1].price, normalized['x_sell']),
+                MarketAction(arb.actions[2].pair, 'buy', arb.actions[2].price, normalized['x_buy'])
+            ]
+        return Arbitrage(
+            actions=new_actions,
+            currency_z=arb.currency_z,
+            amount_z=normalized['z_spend'],
+            profit_z=normalized['z_profit'],
+            profit_z_rel=normalized['profit_rel'],
+            profit_y=normalized['y_profit'],
+            currency_y=arb.currency_y,
+            profit_x=normalized['x_profit'],
+            currency_x=arb.currency_x,
+            orderbooks=arb.orderbooks,
+            ts=arb.ts
+        )
+
+    def get_book_volume_in_front(self, symbol: str, price: Decimal, side: str) -> Decimal:
+        if side == 'BUY':
+            bids = self._orderbooks[symbol].get_bids()
+            return sum([v for p, v in bids if p > price])
+        elif side == 'SELL':
+            asks = self._orderbooks[symbol].get_asks()
+            return sum([v for p, v in asks if p < price])
 
     @staticmethod
     def _make_asset_dicts(symbols_info: Dict[str, Dict[str, str]]) -> Tuple[dict, dict]:
@@ -189,11 +270,11 @@ class ArbitrageDetector:
                     symbols[symbol]['triangles'].add(triangle)
         return triangles_verified, symbols
 
-    def report_arbitrage(self, arbitrage: Arbitrage):
+    def _report_arbitrage(self, arbitrage: Arbitrage):
         # logger.info(f'Arbitrage found: {arbitrage}')
         dispatcher.send(signal='arbitrage_detected', sender=self, arb=arbitrage)
 
-    def calculate_amounts_on_price_level(self, direction: str, yz: tuple, xz: tuple, xy: tuple) -> tuple:
+    def _calculate_amounts_on_price_level(self, direction: str, yz: tuple, xz: tuple, xy: tuple) -> tuple:
         """
         Calculates available trade amount on one depth level in the triangle.
 
@@ -232,7 +313,7 @@ class ArbitrageDetector:
         return amount_y, amount_x_buy, amount_x_sell
 
     @staticmethod
-    def calculate_counter_amount(amount: Decimal, orderbook: List[Tuple[Decimal, Decimal]]) -> Tuple[Decimal, Decimal]:
+    def _calculate_counter_amount(amount: Decimal, orderbook: List[Tuple[Decimal, Decimal]]) -> Tuple[Decimal, Decimal]:
         """
         Goes through the orderbook and calculates the amount of counter currency.
 
@@ -256,7 +337,7 @@ class ArbitrageDetector:
             raise Exception('Critical calculation error')
         return counter_amount
 
-    def normalize_amounts(self, amounts: Dict[str, Decimal], amounts_to_symbols: Dict[str, str], prices: Dict[str, Decimal]):
+    def _normalize_amounts(self, amounts: Dict[str, Decimal], amounts_to_symbols: Dict[str, str], prices: Dict[str, Decimal]):
         """
         Changes the amounts to fit into order amount requirements.
 
@@ -288,7 +369,7 @@ class ArbitrageDetector:
                 return None  # amount is too little
         return amounts_new
 
-    def normalize_amounts_and_recalculate(
+    def _normalize_amounts_and_recalculate(
         self,
         symbols: Tuple[str, str, str], direction: str,
         amounts: Dict[str, Decimal], prices: Tuple[Decimal, Decimal, Decimal],
@@ -312,7 +393,7 @@ class ArbitrageDetector:
         # logger.debug(f'Amounts before normalizing: {amounts}. Prices: {prices}. Symbols: {symbols}. Direction: {direction}.')
         # normalize amounts to comply with min/max order amounts and min amount step
         if direction == 'sell buy sell':
-            amounts_new = self.normalize_amounts(amounts, {'y': yz, 'x_buy': xz, 'x_sell': xy}, prices)
+            amounts_new = self._normalize_amounts(amounts, {'y': yz, 'x_buy': xz, 'x_sell': xy}, prices)
             if amounts_new is None:
                 return None
             # make sure x_profit >= 0
@@ -325,7 +406,7 @@ class ArbitrageDetector:
                     return None
             # make sure y_profit >= 0
             while 1:
-                y_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xy]) * (1 - self._fee)
+                y_got = self._calculate_counter_amount(amounts_new['x_sell'], orderbooks[xy]) * (1 - self._fee)
                 y_spend = amounts_new['y']
                 amounts_new['y_profit'] = y_got - y_spend
                 if amounts_new['y_profit'] >= 0:
@@ -334,17 +415,17 @@ class ArbitrageDetector:
                 if amounts_new['y'] < self._symbol_reqs[yz]['min_amount']:
                     return None
             # recalculate z_spend and z_profit with new amounts
-            z_got = self.calculate_counter_amount(amounts_new['y'], orderbooks[yz]) * (1 - self._fee)
-            amounts_new['z_spend'] = self.calculate_counter_amount(amounts_new['x_buy'], orderbooks[xz])
+            z_got = self._calculate_counter_amount(amounts_new['y'], orderbooks[yz]) * (1 - self._fee)
+            amounts_new['z_spend'] = self._calculate_counter_amount(amounts_new['x_buy'], orderbooks[xz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
         elif direction == 'buy sell buy':
-            amounts_new = self.normalize_amounts(amounts, {'y': yz, 'x_sell': xz, 'x_buy': xy}, prices)
+            amounts_new = self._normalize_amounts(amounts, {'y': yz, 'x_sell': xz, 'x_buy': xy}, prices)
             if amounts_new is None:
                 return None
             # make sure y_profit >= 0
             while 1:
                 y_got = amounts_new['y'] * (1 - self._fee)
-                y_spend = self.calculate_counter_amount(amounts_new['x_buy'], orderbooks[xy])
+                y_spend = self._calculate_counter_amount(amounts_new['x_buy'], orderbooks[xy])
                 amounts_new['y_profit'] = y_got - y_spend
                 if amounts_new['y_profit'] >= 0:
                     break
@@ -360,8 +441,8 @@ class ArbitrageDetector:
                 if amounts_new['x_sell'] < self._symbol_reqs[xz]['min_amount']:
                     return None
             # recalculate z_spend and z_profit with new amounts
-            z_got = self.calculate_counter_amount(amounts_new['x_sell'], orderbooks[xz]) * (1 - self._fee)
-            amounts_new['z_spend'] = self.calculate_counter_amount(amounts_new['y'], orderbooks[yz])
+            z_got = self._calculate_counter_amount(amounts_new['x_sell'], orderbooks[xz]) * (1 - self._fee)
+            amounts_new['z_spend'] = self._calculate_counter_amount(amounts_new['y'], orderbooks[yz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
         else:
             logger.warning(f'Bad direction: {direction}')
@@ -372,7 +453,7 @@ class ArbitrageDetector:
             return None
         return amounts_new
 
-    def limit_amounts(self, amounts: Dict[str, Decimal], reduce_factor: Decimal) -> Dict[str, Decimal]:
+    def _limit_amounts(self, amounts: Dict[str, Decimal], reduce_factor: Decimal) -> Dict[str, Decimal]:
         """
         Reduces amounts to stay away from the edge
         :param amounts: dict of amounts
@@ -382,73 +463,7 @@ class ArbitrageDetector:
         new_amounts = {k: v*reduce_factor for k, v in amounts.items()}
         return new_amounts
 
-    def reduce_arbitrage(self, arb: Arbitrage, reduce_factor: Decimal) -> Arbitrage or None:
-        """
-        Reduces amounts of a given arbitrage by a given factor
-        :param arb: initial arbitrage
-        :param reduce_factor: the multiplier
-        :return: new arbitrage (only amounts are changed) or None if there is no arbitrage
-        available with lower amounts
-        """
-        amounts = {
-            'y': arb.actions[0].amount,
-            'z_spend': arb.amount_z,
-            'z_profit': arb.profit_z
-        }
-        # we assume here that it's either "sell buy sell" or "buy sell buy"
-        # exactly in the YZ, XZ, XY sequence
-        if arb.actions[0].action == 'sell':
-            direction = 'sell buy sell'
-            amounts['x_buy'] = arb.actions[1].amount
-            amounts['x_sell'] = arb.actions[2].amount
-        else:
-            direction = 'buy sell buy'
-            amounts['x_buy'] = arb.actions[2].amount
-            amounts['x_sell'] = arb.actions[1].amount
-        yz = self._exchange.make_symbol(arb.actions[0].pair[0], arb.actions[0].pair[1])
-        xz = self._exchange.make_symbol(arb.actions[1].pair[0], arb.actions[1].pair[1])
-        xy = self._exchange.make_symbol(arb.actions[2].pair[0], arb.actions[2].pair[1])
-        # logger.debug(f'Amounts before reduction: {amounts}')
-        new_amounts = self.limit_amounts(amounts, reduce_factor)
-        # logger.debug(f'Amounts reduced: {new_amounts}')
-        normalized = self.normalize_amounts_and_recalculate(
-            symbols=(yz, xz, xy),
-            direction=direction,
-            amounts=new_amounts,
-            prices=(arb.actions[0].price, arb.actions[1].price, arb.actions[2].price),
-            orderbooks=arb.orderbooks
-        )
-        if normalized is None:
-            logger.debug('No reduced arbitrage available')
-            return None
-        # logger.debug(f'Reduced amounts normalized and recalculated: {normalized}')
-        if direction == 'sell buy sell':
-            new_actions = [
-                MarketAction(arb.actions[0].pair, 'sell', arb.actions[0].price, normalized['y']),
-                MarketAction(arb.actions[1].pair, 'buy', arb.actions[1].price, normalized['x_buy']),
-                MarketAction(arb.actions[2].pair, 'sell', arb.actions[2].price, normalized['x_sell'])
-            ]
-        else:  # buy sell buy
-            new_actions = [
-                MarketAction(arb.actions[0].pair, 'buy', arb.actions[0].price, normalized['y']),
-                MarketAction(arb.actions[1].pair, 'sell', arb.actions[1].price, normalized['x_sell']),
-                MarketAction(arb.actions[2].pair, 'buy', arb.actions[2].price, normalized['x_buy'])
-            ]
-        return Arbitrage(
-            actions=new_actions,
-            currency_z=arb.currency_z,
-            amount_z=normalized['z_spend'],
-            profit_z=normalized['z_profit'],
-            profit_z_rel=normalized['profit_rel'],
-            profit_y=normalized['y_profit'],
-            currency_y=arb.currency_y,
-            profit_x=normalized['x_profit'],
-            currency_x=arb.currency_x,
-            orderbooks=arb.orderbooks,
-            ts=arb.ts
-        )
-
-    def find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
+    def _find_arbitrage_in_triangle(self, triangle: Tuple[Tuple[str, str], Tuple[str, str], Tuple[str, str]]) -> Arbitrage or None:
         """
         Looks for arbitrage in the triangle: Y/Z, X/Z, X/Y.
 
@@ -517,7 +532,7 @@ class ArbitrageDetector:
             if profit_rel < self._min_profit:
                 break
             # calculate trade amounts available on this level
-            amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
+            amount_y, amount_x_buy, amount_x_sell = self._calculate_amounts_on_price_level(
                 'sell buy sell', bids['yz'][0], asks['xz'][0], bids['xy'][0]
             )
             # calculate the profit on this level
@@ -550,9 +565,9 @@ class ArbitrageDetector:
                 'z_profit': profit_z_total
             }
             # logger.debug(f'Amounts before recalculation: {amounts}')
-            amounts = self.limit_amounts(amounts, self._reduce_factor)
+            amounts = self._limit_amounts(amounts, self._reduce_factor)
             # logger.debug(f'Amounts limited: {amounts}')
-            normalized = self.normalize_amounts_and_recalculate(
+            normalized = self._normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='sell buy sell',
                 amounts=amounts,
@@ -602,7 +617,7 @@ class ArbitrageDetector:
             if profit_rel < self._min_profit:
                 break
             # calculate trade amounts available on this level
-            amount_y, amount_x_buy, amount_x_sell = self.calculate_amounts_on_price_level(
+            amount_y, amount_x_buy, amount_x_sell = self._calculate_amounts_on_price_level(
                 'buy sell buy', asks['yz'][0], bids['xz'][0], asks['xy'][0]
             )
             # calculate the profit on this level
@@ -635,9 +650,9 @@ class ArbitrageDetector:
                 'z_profit': profit_z_total
             }
             # logger.debug(f'Amounts before recalculation: {amounts}')
-            amounts = self.limit_amounts(amounts, self._reduce_factor)
+            amounts = self._limit_amounts(amounts, self._reduce_factor)
             # logger.debug(f'Amounts limited: {amounts}')
-            normalized = self.normalize_amounts_and_recalculate(
+            normalized = self._normalize_amounts_and_recalculate(
                 symbols=(yz, xz, xy),
                 direction='buy sell buy',
                 amounts=amounts,
@@ -677,7 +692,7 @@ class ArbitrageDetector:
                 dispatcher.send(signal='arbitrage_disappeared', sender=self, pairs=pairs, actions=actions)
         return None
 
-    def on_orderbook_changed(self, sender, symbol: str):
+    def _on_orderbook_changed(self, sender, symbol: str):
         try:
             triangles = self._symbols[symbol]['triangles']
         except KeyError:
@@ -687,17 +702,9 @@ class ArbitrageDetector:
                 logger.warning(f'Symbol unknown: {symbol}')
         else:
             for triangle in triangles:
-                arbitrage = self.find_arbitrage_in_triangle(triangle)
+                arbitrage = self._find_arbitrage_in_triangle(triangle)
                 if arbitrage is not None:
-                    self.report_arbitrage(arbitrage)
-
-    def get_book_volume_in_front(self, symbol: str, price: Decimal, side: str) -> Decimal:
-        if side == 'BUY':
-            bids = self._orderbooks[symbol].get_bids()
-            return sum([v for p, v in bids if p > price])
-        elif side == 'SELL':
-            asks = self._orderbooks[symbol].get_asks()
-            return sum([v for p, v in asks if p < price])
+                    self._report_arbitrage(arbitrage)
 
 
 def test_on_arbitrage_detected(sender: ArbitrageDetector, arb: Arbitrage):

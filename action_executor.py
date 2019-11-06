@@ -90,6 +90,8 @@ class ActionExecutor:
             'orders_done': [-1, -1, -1],
             'completed': -1
         }
+        self._stopping = False
+        self._stopped = asyncio.Event()
 
     async def run(self):
         # init account info if it hasn't been passed from above
@@ -175,7 +177,10 @@ class ActionExecutor:
             placed_results = [results[idx] for idx in placed]
             for pres in placed_results:
                 self._action_orders.append((pres.symbol, pres.order_id))
+
+            # let them fill
             placed_results = await self._wait_all_to_fill(placed_results, min_filling_time, self._max_fill_time)
+
             for i, ores in enumerate(placed_results):
                 idx = placed[i]
                 # update order results in our main results list
@@ -297,6 +302,13 @@ class ActionExecutor:
         )
 
         dispatcher.send(signal='execution_finished', sender=self)
+
+        if self._stopping:
+            self._stopped.set()
+
+    async def stop(self):
+        self._stopping = True
+        await self._stopped.wait()
 
     def get_result(self):
         return self._result
@@ -467,7 +479,7 @@ class ActionExecutor:
         if ores.status in ['NEW', 'PARTIALLY_FILLED']:
             started = time.time()
             # keep checking until it gets filled or lost in the book
-            while 1:
+            while not self._stopping:
                 try:
                     ores = await self._exchange.get_order_result(ores.symbol, ores.order_id)
                 except BaseExchange.Error as e:
@@ -502,13 +514,9 @@ class ActionExecutor:
             ores.done_at = int(time.time() * 1000)
         return ores
 
-    async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
+    async def _refresh_order_results(self, old_results: List[BaseExchange.OrderResult]):
+        # check each order's result afresh
         order_results = []
-        # wait to fill each
-        old_results = await asyncio.gather(
-            *[self._wait_to_fill(result, min_filling_time, max_filling_time) for result in old_results]
-        )
-        # check each order's result one more time, as it may have changed after waiting
         for old_r in old_results:
             try:
                 if old_r.status in ['NEW', 'PARTIALLY_FILLED']:
@@ -521,6 +529,14 @@ class ActionExecutor:
             else:
                 order_results.append(new_r)
         return order_results
+
+    async def _wait_all_to_fill(self, old_results: list, min_filling_time: int, max_filling_time: int) -> list:
+        # wait to fill each
+        old_results = await asyncio.gather(
+            *[self._wait_to_fill(result, min_filling_time, max_filling_time) for result in old_results]
+        )
+        # check each order's result one more time, as it may have changed after waiting
+        return await self._refresh_order_results(old_results)
 
     def _revert_action(self, action: Action) -> Action:
         symbol = self._exchange.make_symbol(action.pair[0], action.pair[1])

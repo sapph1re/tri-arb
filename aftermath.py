@@ -16,6 +16,10 @@ class Aftermath:
         self._result = result
 
     async def run(self):
+        if self._result is None:
+            dispatcher.send(signal='aftermath_done', sender=self)
+            return
+
         assets = set()
         pairs = {}
         for action in self._actions:

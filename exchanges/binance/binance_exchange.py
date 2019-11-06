@@ -12,6 +12,7 @@ class BinanceExchange(BaseExchange):
         super().__init__()
         self._api = api
         self._symbols_info = {}
+        self._websockets = []
 
     @classmethod
     async def create(cls, api_key: str, api_secret: str):
@@ -44,20 +45,19 @@ class BinanceExchange(BaseExchange):
 
     def run_orderbooks(self, symbols: Dict[str, dict]) -> Dict[str, BaseOrderbook]:
         orderbooks = {}
-        websockets = []
         i = 999
         ws = None
         for symbol, details in symbols.items():
             # starting a websocket per every 50 symbols
             if i >= 50:
                 ws = BinanceWebsocket()
-                websockets.append(ws)
+                self._websockets.append(ws)
                 i = 0
             # starting an orderbook watcher for every symbol
             ob = BinanceOrderbook(symbol=symbol, websocket=ws)
             orderbooks[symbol] = ob
             i += 1
-        for ws in websockets:
+        for ws in self._websockets:
             ws.start()
         return orderbooks
 
@@ -100,6 +100,8 @@ class BinanceExchange(BaseExchange):
             raise self.Error(f'Failed to measure ping: {e.message}')
 
     async def stop(self):
+        for ws in self._websockets:
+            ws.stop()
         await self._api.stop()
 
     def _parse_order_result(self, result: dict) -> BaseExchange.OrderResult:

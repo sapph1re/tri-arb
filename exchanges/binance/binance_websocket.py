@@ -59,7 +59,8 @@ class BinanceWebsocket:
             )
             self._ws.on_open = self.on_ws_open
             self._ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-            logger.info('Restarting the websocket')
+            if not self._stop_now:
+                logger.info('Restarting the websocket')
         logger.info('BinanceWebsocket stopped')
 
     def stop(self):

@@ -1,4 +1,5 @@
 import asyncio
+import signal
 from pydispatch import dispatcher
 from config import config, get_exchange_class
 from account_info import AccountInfo
@@ -12,6 +13,7 @@ logger = get_logger(__name__)
 
 class TriangularArbitrage:
     def __init__(self, exchange: BaseExchange, account_info: AccountInfo):
+        self.stopped = asyncio.Event()
         self._exchange = exchange
         self._account_info = account_info
         self._is_processing = False
@@ -23,6 +25,8 @@ class TriangularArbitrage:
             min_age=config.getint('Arbitrage', 'MinArbAge'),
             reduce_factor=config.getdecimal('Arbitrage', 'AmountReduceFactor')
         )
+        self._executor = None
+        self._aftermath_done = asyncio.Event()
         dispatcher.connect(self._process_arbitrage, signal='arbitrage_detected', sender=self._detector)
 
     @classmethod
@@ -35,8 +39,23 @@ class TriangularArbitrage:
         acc = await AccountInfo.create(exchange, auto_update_interval=10)
         return cls(exchange, acc)
 
+    async def stop(self):
+        dispatcher.disconnect(self._process_arbitrage, signal='arbitrage_detected', sender=self._detector)
+        self._detector.stop()
+        logger.info('Detector stopped')
+        if self._executor is not None:
+            await self._executor.stop()
+            logger.info('Executor stopped')
+            await self._aftermath_done.wait()
+        self._account_info.stop()
+        logger.info('Account Info stopped')
+        await self._exchange.stop()
+        logger.info('Exchange stopped')
+        self.stopped.set()
+
     def _on_aftermath_done(self, sender: Aftermath):
         logger.info('Aftermath done')
+        self._aftermath_done.set()
 
     def _on_arbitrage_processed(self, sender: ActionExecutor):
         logger.info('Arbitrage processed')
@@ -46,6 +65,7 @@ class TriangularArbitrage:
         aftermath = Aftermath(self._exchange, actions, result)
         dispatcher.connect(self._on_aftermath_done, signal='aftermath_done', sender=aftermath)
         asyncio.ensure_future(aftermath.run())
+        self._executor = None
 
     def _process_arbitrage(self, arb: Arbitrage):
         if self._is_processing:
@@ -64,23 +84,35 @@ class TriangularArbitrage:
                     order_type='LIMIT'
                 )
             )
-        executor = ActionExecutor(
+        self._executor = ActionExecutor(
             exchange=self._exchange,
             actions=actions,
             account_info=self._account_info,
             detector=self._detector,
             arbitrage=arb
         )
-        dispatcher.connect(self._on_arbitrage_processed, signal='execution_finished', sender=executor)
-        asyncio.ensure_future(executor.run())
+        dispatcher.connect(self._on_arbitrage_processed, signal='execution_finished', sender=self._executor)
+        asyncio.ensure_future(self._executor.run())
+        self._aftermath_done = asyncio.Event()
 
 
 async def main():
     logger.info('Starting...')
+
     triarb = await TriangularArbitrage.create()
 
-    while True:
-        await asyncio.sleep(1)
+    # Graceful termination on SIGINT/SIGTERM. Supervisord sends SIGTERM when you click Stop.
+    def graceful_stop(signum, frame):
+        signame = signal.Signals(signum).name
+        logger.info(f'Received signal: {signame}. Terminating...')
+        asyncio.ensure_future(triarb.stop())
+
+    signal.signal(signal.SIGINT, graceful_stop)
+    signal.signal(signal.SIGTERM, graceful_stop)
+
+    await triarb.stopped.wait()
+
+    logger.info('Stopped')
 
 
 if __name__ == '__main__':

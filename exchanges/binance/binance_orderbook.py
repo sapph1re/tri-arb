@@ -22,6 +22,18 @@ class BinanceOrderbook(BaseOrderbook):
             sender=self._websocket
         )
 
+    def stop(self):
+        dispatcher.disconnect(
+            self._on_ws_depth,
+            signal=f'ws_depth_{self._symbol.lower()}',
+            sender=self._websocket
+        )
+        dispatcher.disconnect(
+            self._on_ws_closed,
+            signal='ws_closed',
+            sender=self._websocket
+        )
+
     def _on_ws_closed(self):
         self._valid = False
 
