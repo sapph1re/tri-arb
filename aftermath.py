@@ -38,16 +38,18 @@ class Aftermath:
             except BaseExchange.Error as e:
                 logger.error(f'Failed to get order result: {ores.symbol}:{ores.order_id}. Reason: {e.message}')
             base, quote = pairs[ores.symbol]
-            trade_fee = config.getdecimal('Exchange', 'TradeFee')
-            if ores.side == 'BUY':
-                profits[base] += ores.amount_executed * (1 - trade_fee)
-                profits[quote] -= ores.amount_quote
-            elif ores.side == 'SELL':
-                profits[base] -= ores.amount_executed
-                profits[quote] += ores.amount_quote * (1 - trade_fee)
-            else:
-                logger.error(f'Bad side: {ores.side}')
-                return
+            # calculate profit if information is available
+            if ores.amount_quote is not None:
+                trade_fee = config.getdecimal('Exchange', 'TradeFee')
+                if ores.side == 'BUY':
+                    profits[base] += ores.amount_executed * (1 - trade_fee)
+                    profits[quote] -= ores.amount_quote
+                elif ores.side == 'SELL':
+                    profits[base] -= ores.amount_executed
+                    profits[quote] += ores.amount_quote * (1 - trade_fee)
+                else:
+                    logger.error(f'Bad side: {ores.side}')
+                    return
             # if it's an acton order (not an emergency order), calculate its filling
             if (ores.symbol, ores.order_id) in self._result.action_orders:
                 idx = self._result.action_orders.index((ores.symbol, ores.order_id))
