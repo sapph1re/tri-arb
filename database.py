@@ -6,6 +6,8 @@ logger = get_logger(__name__)
 
 db = pw.MySQLDatabase(
     config.get('Database', 'DBName'),
+    host=config.get('Database', 'DBHost'),
+    port=config.getint('Database', 'DBPort'),
     user=config.get('Database', 'DBUser'),
     password=config.get('Database', 'DBPass'),
     charset='utf8mb4'
