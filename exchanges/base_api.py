@@ -50,11 +50,11 @@ class BaseAPI:
         for level in sorted(self._priority_locks.keys()):
             if level >= urgency:
                 await self._priority_locks[level].acquire()
-        # and unless we are already stopping...
-        if self._stopping:
-            raise BaseAPI.Stopping
-        # ...do the stuff
+        # do the stuff
         try:
+            if self._stopping:
+                # unless we are already stopping
+                raise BaseAPI.Stopping
             result = await func(*args, **kwargs)
         finally:
             # now let other ones of same or lower urgency go through
@@ -73,5 +73,6 @@ class BaseAPI:
 
     async def stop(self):
         self._stopping = True
+        # all locks acquired means all requests are completed
         for level, lock in self._priority_locks.items():
             await lock.acquire()
