@@ -6,29 +6,23 @@ import hmac
 import urllib.parse
 from typing import Tuple
 from aiohttp.client_exceptions import ClientError
+from exchanges.base_api import BaseAPI
 from logger import get_logger
 logger = get_logger(__name__)
 
 
-class IndodaxAPI:
-
-    class Error(BaseException):
-        def __init__(self, message):
-            self.message = message
+class IndodaxAPI(BaseAPI):
 
     def __init__(self, api_key: str, api_secret: str):
+        super().__init__()
         # self._base_url = 'https://indodax.com/'   # regular API url
         self._base_url = 'https://btcapi.net/'  # no-rate-limit API url
+        self._request_interval = 0.333  # rate limit is 180 requests/min
+        # self._request_interval = 0.01  # they said no rate limit for me, but let's stay at 100 requests/sec
         self._api_key = api_key
         self._api_secret = api_secret
         loop = asyncio.get_event_loop()
         self._session = aiohttp.ClientSession(loop=loop, headers={})
-        self._last_request_ts = 0
-        self._priority_locks = {
-            0: asyncio.Lock(),
-            1: asyncio.Lock(),
-            2: asyncio.Lock()
-        }
 
     async def depth(self, symbol: str, urgency: int = 0) -> dict:
         return await self._safe_call(urgency, self._request_public, 'get', f'api/{symbol.lower()}/depth')
@@ -87,50 +81,8 @@ class IndodaxAPI:
         return min(pings), max(pings), avg
 
     async def stop(self):
+        await super().stop()
         await self._session.close()
-
-    async def _safe_call(self, urgency: int, func, *args, **kwargs):
-        # prioritizes, throttles, retries on error
-        tries = 10
-        try:
-            while 1:
-                try:
-                    return await self._prioritize(urgency, self._throttle, func, *args, **kwargs)
-                except BaseException as e:
-                    logger.warning(f'API call failed: {args} {kwargs}. Reason: {e}')
-                    tries -= 1
-                    if tries > 0:
-                        await asyncio.sleep(0.5)
-                        continue
-                    else:
-                        raise
-        except (asyncio.TimeoutError, self.Error):
-            raise self.Error('Failed 10 times')
-
-    async def _prioritize(self, urgency: int, func, *args, **kwargs):
-        # give way to more urgent ones
-        for level in sorted(self._priority_locks.keys()):
-            if level >= urgency:
-                await self._priority_locks[level].acquire()
-        # do the stuff
-        try:
-            result = await func(*args, **kwargs)
-        finally:
-            # now let other ones of same or lower urgency go through
-            for level in sorted(self._priority_locks.keys()):
-                if level >= urgency:
-                    self._priority_locks[level].release()
-        return result
-
-    async def _throttle(self, func, *args, **kwargs):
-        passed = time.time() - self._last_request_ts
-        # limit = 0.333  # rate limit is 180 requests/min
-        limit = 0.01    # they said no rate limit for me, but let's stay at 100 requests/sec
-        if passed < limit:
-            await asyncio.sleep(limit - passed)
-        r = await func(*args, **kwargs)
-        self._last_request_ts = time.time()
-        return r
 
     async def _measure_ping_once(self) -> int:
         t = time.time()
