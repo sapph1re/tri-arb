@@ -17,8 +17,8 @@ class IndodaxAPI(BaseAPI):
         super().__init__()
         # self._base_url = 'https://indodax.com/'   # regular API url
         self._base_url = 'https://btcapi.net/'  # no-rate-limit API url
-        self._request_interval = 0.333  # rate limit is 180 requests/min
-        # self._request_interval = 0.01  # they said no rate limit for me, but let's stay at 100 requests/sec
+        # self._request_interval = 0.333  # rate limit is 180 requests/min
+        self._request_interval = 0.01  # they said no rate limit for me, but let's stay at 100 requests/sec
         self._api_key = api_key
         self._api_secret = api_secret
         loop = asyncio.get_event_loop()
