@@ -10,6 +10,10 @@ class BaseAPI:
         def __init__(self, message):
             self.message = message
 
+    class Stopping(Error):
+        def __init__(self):
+            self.message = 'API is stopping'
+
     def __init__(self):
         self._stopping = False
         self._stopped = asyncio.Event()
@@ -28,6 +32,8 @@ class BaseAPI:
             while not self._stopping:
                 try:
                     return await self._prioritize(urgency, self._throttle, func, *args, **kwargs)
+                except BaseAPI.Stopping:
+                    raise
                 except BaseException as e:
                     logger.warning(f'API call failed: {func.__name__}. Reason: {e}')
                     tries -= 1
@@ -38,15 +44,21 @@ class BaseAPI:
                         raise
             else:
                 self._stopped.set()
-        except (asyncio.TimeoutError, self.Error):
-            raise self.Error('Failed 10 times')
+        except BaseAPI.Stopping:
+            self._stopped.set()
+            raise
+        except (asyncio.TimeoutError, BaseAPI.Error):
+            raise BaseAPI.Error('Failed 10 times')
 
     async def _prioritize(self, urgency: int, func, *args, **kwargs):
         # give way to more urgent ones
         for level in sorted(self._priority_locks.keys()):
             if level >= urgency:
                 await self._priority_locks[level].acquire()
-        # do the stuff
+        # and unless we are already stopping...
+        if self._stopping:
+            raise BaseAPI.Stopping
+        # ...do the stuff
         try:
             result = await func(*args, **kwargs)
         finally:
