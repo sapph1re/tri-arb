@@ -11,8 +11,7 @@ class BaseAPI:
             self.message = message
 
     class Stopping(Error):
-        def __init__(self):
-            self.message = 'API is stopping'
+        pass
 
     def __init__(self):
         self._stopping = False
@@ -42,7 +41,7 @@ class BaseAPI:
                     else:
                         raise
         except BaseAPI.Stopping:
-            raise
+            raise BaseAPI.Error('API is stopping')
         except (asyncio.TimeoutError, BaseAPI.Error):
             raise BaseAPI.Error('Failed 10 times')
 
