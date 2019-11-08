@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 from decimal import Decimal
 from pydispatch import dispatcher
@@ -66,6 +67,7 @@ class Aftermath:
                     fillings[idx] = 1.0
 
         DBArbResult.create(
+            dt = datetime.utcnow(),
             triangle = triangle,
             parallels = self._result.parallels,
             scenario = self._result.scenario,

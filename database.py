@@ -20,6 +20,7 @@ class BaseModel(pw.Model):
 
 
 class DBArbResult(BaseModel):
+    dt = pw.DateTimeField()
     # triangle: e.g. "BTC ETH XRP" (alphabetically ordered)
     triangle = pw.CharField()
     # parallels: 1, 2 or 3, number of parallel actions on the first step
