@@ -135,7 +135,11 @@ class IndodaxExchange(BaseExchange):
         )
 
     async def _load_symbols_info(self):
-        r = await self._api.tickers()
+        try:
+            r = await self._api.tickers()
+        except IndodaxAPI.Error as e:
+            logger.warning(f'Failed to load symbols info: {e.message}')
+            return
         last_prices = {
             symbol.upper(): Decimal(details['last'])
             for symbol, details in r['tickers'].items()
