@@ -111,7 +111,6 @@ class IndodaxAPI(BaseAPI):
             'data': data,
         }
         r = await self._request('post', 'tapi', **kwargs)
-        self._last_request_ts = time.time()
         try:
             if r['success']:
                 return r['return']
