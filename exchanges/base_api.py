@@ -12,6 +12,7 @@ class BaseAPI:
 
     def __init__(self):
         self._stopping = False
+        self._stopped = asyncio.Event()
         self._last_request_ts = 0
         self._priority_locks = {
             0: asyncio.Lock(),
@@ -35,6 +36,8 @@ class BaseAPI:
                         continue
                     else:
                         raise
+            else:
+                self._stopped.set()
         except (asyncio.TimeoutError, self.Error):
             raise self.Error('Failed 10 times')
 
@@ -63,3 +66,4 @@ class BaseAPI:
 
     async def stop(self):
         self._stopping = True
+        await self._stopped.wait()
