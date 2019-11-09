@@ -1,10 +1,16 @@
 from sortedcontainers import SortedSet
 from operator import neg
+from decimal import Decimal
 from logger import get_logger
 logger = get_logger(__name__)
 
 
 class BaseOrderbook:
+
+    class Error(BaseException):
+        def __init__(self, message):
+            self.message = message
+
     def __init__(self, symbol: str):
         self._symbol = symbol
         self._bids_list_cached = []
@@ -43,6 +49,18 @@ class BaseOrderbook:
                     logger.warning(f'Price is missing in {self._symbol} asks: {price}')
             self._asks_changed = False
         return self._asks_list_cached.copy()
+
+    def get_best_bid(self) -> Decimal:
+        try:
+            return self._bids_prices[0]
+        except IndexError:
+            raise BaseOrderbook.Error('Bids are empty')
+
+    def get_best_ask(self) -> Decimal:
+        try:
+            return self._asks_prices[0]
+        except IndexError:
+            raise BaseOrderbook.Error('Asks are empty')
 
     def stop(self):
         # graceful stop, if needed

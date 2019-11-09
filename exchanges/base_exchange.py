@@ -15,7 +15,7 @@ class BaseExchange:
             self.price = price
             self.amount_original = amount_original
             self.amount_executed = amount_executed
-            self.amount_quote = amount_quote
+            self.amount_quote = amount_quote    # quote amount executed
             self.status = status    # NEW, PARTIALLY_FILLED, FILLED, CANCELLED, OTHER
             self.placed_at = placed_at  # timestamp in milliseconds
             self.done_at = done_at  # timestamp in milliseconds

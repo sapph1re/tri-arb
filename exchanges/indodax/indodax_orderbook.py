@@ -9,11 +9,6 @@ logger = get_logger(__name__)
 
 
 class IndodaxOrderbook(BaseOrderbook):
-
-    class Error(BaseException):
-        def __init__(self, message):
-            self.message = message
-
     def __init__(self, api: IndodaxAPI, symbol: str):
         super().__init__(symbol)
         self._api = api
@@ -23,18 +18,6 @@ class IndodaxOrderbook(BaseOrderbook):
             asyncio.get_event_loop(),
             thread_name=f'Orderbook {self._symbol}'
         )
-
-    def get_best_bid(self) -> Decimal:
-        try:
-            return self._bids_prices[0]
-        except IndexError:
-            raise self.Error('Bids are empty')
-
-    def get_best_ask(self) -> Decimal:
-        try:
-            return self._asks_prices[0]
-        except IndexError:
-            raise self.Error('Asks are empty')
 
     def estimate_market_buy_total(self, amount: Decimal) -> Decimal:
         total = Decimal(0)

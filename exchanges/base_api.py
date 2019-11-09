@@ -10,6 +10,9 @@ class BaseAPI:
         def __init__(self, message):
             self.message = message
 
+    class ErrorNoRetry(Error):
+        pass
+
     class Stopping(BaseException):
         pass
 
@@ -30,16 +33,20 @@ class BaseAPI:
             while not self._stopping:
                 try:
                     return await self._prioritize(urgency, self._throttle, func, *args, **kwargs)
+                except BaseAPI.ErrorNoRetry:
+                    raise
                 except BaseAPI.Stopping:
                     raise
                 except BaseException as e:
-                    logger.warning(f'API call failed: {func.__name__}. Reason: {e}')
+                    logger.warning(f'API call failed: {args} {kwargs}. Reason: {e}')
                     tries -= 1
                     if tries > 0:
                         await asyncio.sleep(0.5)
                         continue
                     else:
                         raise
+        except BaseAPI.ErrorNoRetry as e:
+            raise BaseAPI.Error(e.message)
         except BaseAPI.Stopping:
             raise BaseAPI.Error('API is stopping')
         except (asyncio.TimeoutError, BaseAPI.Error):
