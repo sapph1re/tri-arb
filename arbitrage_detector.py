@@ -407,9 +407,10 @@ class ArbitrageDetector:
             # make sure y_profit >= 0
             while 1:
                 y_got = self._calculate_counter_amount(amounts_new['x_sell'], orderbooks[xy]) * (1 - self._fee)
+                y_got_min = amounts_new['x_sell'] * prices[xy] * (1 - self._fee)
                 y_spend = amounts_new['y']
                 amounts_new['y_profit'] = y_got - y_spend
-                if amounts_new['y_profit'] >= 0:
+                if amounts_new['y_profit'] >= 0 and y_spend <= y_got_min:
                     break
                 amounts_new['y'] -= self._symbol_reqs[yz]['amount_step']
                 if amounts_new['y'] < self._symbol_reqs[yz]['min_amount']:
@@ -418,6 +419,12 @@ class ArbitrageDetector:
             z_got = self._calculate_counter_amount(amounts_new['y'], orderbooks[yz]) * (1 - self._fee)
             amounts_new['z_spend'] = self._calculate_counter_amount(amounts_new['x_buy'], orderbooks[xz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
+            # make sure we're profitable even with a slippage all the way to our limit prices
+            z_got_min = amounts_new['y'] * prices[yz] * (1 - self._fee)
+            z_spend_max = amounts_new['x_buy'] * prices[xz]
+            if z_got_min < z_spend_max:
+                logger.info(f'Z: {z_got_min} < {z_spend_max}')
+                return None
         elif direction == 'buy sell buy':
             amounts_new = self._normalize_amounts(amounts, {'y': yz, 'x_sell': xz, 'x_buy': xy}, prices)
             if amounts_new is None:
@@ -426,8 +433,9 @@ class ArbitrageDetector:
             while 1:
                 y_got = amounts_new['y'] * (1 - self._fee)
                 y_spend = self._calculate_counter_amount(amounts_new['x_buy'], orderbooks[xy])
+                y_spend_max = amounts_new['x_buy'] * prices[xy]
                 amounts_new['y_profit'] = y_got - y_spend
-                if amounts_new['y_profit'] >= 0:
+                if amounts_new['y_profit'] >= 0 and y_got >= y_spend_max:
                     break
                 amounts_new['x_buy'] -= self._symbol_reqs[xy]['amount_step']
                 if amounts_new['x_buy'] < self._symbol_reqs[xy]['min_amount']:
@@ -444,6 +452,12 @@ class ArbitrageDetector:
             z_got = self._calculate_counter_amount(amounts_new['x_sell'], orderbooks[xz]) * (1 - self._fee)
             amounts_new['z_spend'] = self._calculate_counter_amount(amounts_new['y'], orderbooks[yz])
             amounts_new['z_profit'] = z_got - amounts_new['z_spend']
+            # make sure we're profitable even with a slippage all the way to our limit prices
+            z_got_min = amounts_new['x_sell'] * prices[xz] * (1 - self._fee)
+            z_spend_max = amounts_new['y'] * prices[yz]
+            if z_got_min < z_spend_max:
+                logger.info(f'Z: {z_got_min} < {z_spend_max}')
+                return None
         else:
             logger.warning(f'Bad direction: {direction}')
             return None
