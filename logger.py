@@ -1,14 +1,14 @@
 import logging
-from logging.handlers import RotatingFileHandler
+# from logging.handlers import RotatingFileHandler
 
 
-log_formatter_debug = logging.Formatter(
-    '%(asctime)s\t%(levelname)s\t[%(filename)s:%(lineno)s <> '
-    '%(funcName)s() <> %(threadName)s]\n%(message)s\n'
-)
-handler_debug = RotatingFileHandler('debug.log', mode='a', maxBytes=10000000)
-handler_debug.setLevel(logging.DEBUG)
-handler_debug.setFormatter(log_formatter_debug)
+# log_formatter_debug = logging.Formatter(
+#     '%(asctime)s\t%(levelname)s\t[%(filename)s:%(lineno)s <> '
+#     '%(funcName)s() <> %(threadName)s]\n%(message)s\n'
+# )
+# handler_debug = RotatingFileHandler('debug.log', mode='a', maxBytes=10000000)
+# handler_debug.setLevel(logging.DEBUG)
+# handler_debug.setFormatter(log_formatter_debug)
 
 log_formatter_info = logging.Formatter('%(asctime)s\t%(levelname)s\t[%(filename)s]\t%(message)s')
 handler_console = logging.StreamHandler()
@@ -27,7 +27,7 @@ def get_logger(name):
     logger.setLevel(logging.DEBUG)
 
     # writing a detailed debug log to debug.log file
-    logger.addHandler(handler_debug)
+    # logger.addHandler(handler_debug)
 
     # writing a general log to console
     logger.addHandler(handler_console)
