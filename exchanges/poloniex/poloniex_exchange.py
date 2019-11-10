@@ -115,54 +115,52 @@ class PoloniexExchange(BaseExchange):
     async def get_order_result(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
             r = await self._api.order_status(order_id, urgency=1)
-        except PoloniexAPI.Error as e:
-            if 'Order not found' in e.message:
-                # order is filled or cancelled
+        except PoloniexAPI.OrderNotFound:
+            # order is filled or cancelled
+            try:
+                r = await self._api.order_trades(order_id, urgency=1)
+            except PoloniexAPI.OrderNotFound:
+                # order cancelled unfilled
                 try:
-                    r = await self._api.order_trades(order_id, urgency=1)
-                except PoloniexAPI.Error as e:
-                    if 'Order not found' in e.message:
-                        # order cancelled unfilled
-                        try:
-                            return BaseExchange.OrderResult(
-                                symbol=symbol,
-                                order_id=order_id,
-                                side=self._orders[order_id]['side'],
-                                price=self._orders[order_id]['price'],
-                                amount_original=self._orders[order_id]['amount'],
-                                amount_executed=Decimal(0),
-                                amount_quote=Decimal(0),
-                                status='CANCELLED'
-                            )
-                        except KeyError:
-                            raise PoloniexExchange.Error(f'Failed to get cancelled order details, '
-                                                         f'not found in cache: {order_id}')
-                    else:
-                        raise PoloniexExchange.Error(f'Failed to get order trades: {e.message}')
-                else:
-                    # order is filled or was partially filled and then cancelled
-                    try:
-                        amount_original = self._orders[order_id]['amount']
-                        amount_executed = Decimal(0)
-                        amount_quote = Decimal(0)
-                        for trade in r:
-                            amount_executed += Decimal(trade['amount'])
-                            amount_quote += Decimal(trade['total'])
-                        status = 'CANCELLED' if amount_executed < amount_original else 'FILLED'
-                        return BaseExchange.OrderResult(
-                            symbol=symbol,
-                            order_id=order_id,
-                            side=self._orders[order_id]['side'],
-                            price=self._orders[order_id]['price'],
-                            amount_original=amount_original,
-                            amount_executed=amount_executed,
-                            amount_quote=amount_quote,
-                            status=status
-                        )
-                    except (KeyError, TypeError):
-                        raise PoloniexExchange.Error(f'Failed to get order trades, bad response: {r}')
+                    return BaseExchange.OrderResult(
+                        symbol=symbol,
+                        order_id=order_id,
+                        side=self._orders[order_id]['side'],
+                        price=self._orders[order_id]['price'],
+                        amount_original=self._orders[order_id]['amount'],
+                        amount_executed=Decimal(0),
+                        amount_quote=Decimal(0),
+                        status='CANCELLED'
+                    )
+                except KeyError:
+                    raise PoloniexExchange.Error(f'Failed to get cancelled order details, '
+                                                 f'not found in cache: {order_id}')
+            except PoloniexAPI.Error as e:
+                raise PoloniexExchange.Error(f'Failed to get order trades: {e.message}')
             else:
-                raise PoloniexExchange.Error(f'Failed to get order status: {e.message}')
+                # order is filled or was partially filled and then cancelled
+                try:
+                    amount_original = self._orders[order_id]['amount']
+                    amount_executed = Decimal(0)
+                    amount_quote = Decimal(0)
+                    for trade in r:
+                        amount_executed += Decimal(trade['amount'])
+                        amount_quote += Decimal(trade['total'])
+                    status = 'CANCELLED' if amount_executed < amount_original else 'FILLED'
+                    return BaseExchange.OrderResult(
+                        symbol=symbol,
+                        order_id=order_id,
+                        side=self._orders[order_id]['side'],
+                        price=self._orders[order_id]['price'],
+                        amount_original=amount_original,
+                        amount_executed=amount_executed,
+                        amount_quote=amount_quote,
+                        status=status
+                    )
+                except (KeyError, TypeError):
+                    raise PoloniexExchange.Error(f'Failed to get order trades, bad response: {r}')
+        except PoloniexAPI.Error as e:
+            raise PoloniexExchange.Error(f'Failed to get order status: {e.message}')
         else:
             # order is new or partially filled
             try:
