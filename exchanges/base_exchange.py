@@ -21,8 +21,11 @@ class BaseExchange:
             self.done_at = done_at  # timestamp in milliseconds
 
     class Error(BaseException):
-        def __init__(self, message):
+        def __init__(self, message: str = ''):
             self.message = message
+
+    class OrderNotFound(Error):
+        pass
 
     def __init__(self):
         pass

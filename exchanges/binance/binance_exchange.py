@@ -26,15 +26,15 @@ class BinanceExchange(BaseExchange):
         try:
             info = await self._api.account()
         except BinanceAPI.Error as e:
-            raise self.Error(e.message)
+            raise BinanceExchange.Error(e.message)
         try:
             for each in info['balances']:
                 asset = each['asset']
                 balances[asset] = Decimal(each['free'])
         except KeyError:
-            self.Error(f'Bad data format! Data: {info}')
+            BinanceExchange.Error(f'Bad data format! Data: {info}')
         except (ValueError, TypeError):
-            self.Error(f'Could not parse balance for asset: {asset}')
+            BinanceExchange.Error(f'Could not parse balance for asset: {asset}')
         return balances
 
     def get_symbols_info(self):
@@ -64,9 +64,9 @@ class BinanceExchange(BaseExchange):
     async def create_order(self, symbol: str, side: str, order_type: str, amount: Decimal,
                            price: Decimal or None = None) -> BaseExchange.OrderResult:
         if side not in ['BUY', 'SELL']:
-            raise self.Error('Bad side')
+            raise BinanceExchange.Error('Bad side')
         if order_type not in ['LIMIT', 'MARKET']:
-            raise self.Error('Bad order type')
+            raise BinanceExchange.Error('Bad order type')
         try:
             r = await self._api.create_order(
                 symbol=symbol,
@@ -74,30 +74,33 @@ class BinanceExchange(BaseExchange):
                 order_type=order_type,
                 quantity=f'{amount:f}',
                 price=None if price is None else f'{price:f}',
+                urgency=1
             )
             return self._parse_order_result(r)
         except BinanceAPI.Error as e:
-            raise self.Error(e.message)
+            raise BinanceExchange.Error(e.message)
 
     async def get_order_result(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
-            r = await self._api.order_info(symbol, order_id)
+            r = await self._api.order_info(symbol, int(order_id), urgency=1)
             return self._parse_order_result(r)
         except BinanceAPI.Error as e:
-            raise self.Error(e.message)
+            raise BinanceExchange.Error(e.message)
 
     async def cancel_order(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
-            r = await self._api.cancel_order(symbol, order_id)
-            return self._parse_order_result(r)
+            r = await self._api.cancel_order(symbol, int(order_id), urgency=1)
+        except BinanceAPI.OrderNotFound:
+            raise BinanceExchange.OrderNotFound
         except BinanceAPI.Error as e:
-            raise self.Error(e.message)
+            raise BinanceExchange.Error(e.message)
+        return self._parse_order_result(r)
 
     async def measure_ping(self) -> Tuple[int, int, int]:
         try:
             return await self._api.measure_ping()
         except BinanceAPI.Error as e:
-            raise self.Error(f'Failed to measure ping: {e.message}')
+            raise BinanceExchange.Error(f'Failed to measure ping: {e.message}')
 
     async def stop(self):
         for ws in self._websockets:

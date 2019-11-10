@@ -115,9 +115,11 @@ class IndodaxAPI(BaseAPI):
             if r['success']:
                 return r['return']
             else:
-                raise self.Error(r['error'])
+                if 'invalid order' in r['error']:
+                    raise IndodaxAPI.OrderNotFound
+                raise IndodaxAPI.Error(r['error'])
         except (KeyError, TypeError):
-            raise self.Error(f'Bad response: {r}')
+            raise IndodaxAPI.Error(f'Bad response: {r}')
 
     async def _request(self, verb, endpoint, **kwargs) -> dict:
         url = self._base_url + endpoint
@@ -126,17 +128,18 @@ class IndodaxAPI(BaseAPI):
             async with getattr(self._session, verb)(url, **kwargs) as response:
                 result = await self._handle_response(response)
         except ClientError as e:
-            raise self.Error(str(e))
+            raise IndodaxAPI.Error(str(e))
         return result
 
     async def _handle_response(self, response: aiohttp.ClientResponse) -> dict:
         if not str(response.status).startswith('2'):
-            raise self.Error(await response.text())
+            error = await response.text()
+            raise IndodaxAPI.Error(error)
         try:
             return await response.json()
         except ValueError:
             text = await response.text()
-            raise self.Error(f'Invalid Response: {text}')
+            raise IndodaxAPI.Error(f'Invalid Response: {text}')
 
 
 async def main():
@@ -149,17 +152,23 @@ async def main():
     print(await api.depth('btc_idr'))
     print(await api.account_info())
 
-    r = await api.create_order('btc_idr', 'sell', '2000000000', '0.00045')
-    print(r)
-    oid = r['order_id']
-    print(await api.order_info('btc_idr', oid))
-    print(await api.cancel_order('btc_idr', oid, 'sell'))
-
-    r = await api.create_order('btc_idr', 'buy', '5000000', '50000')
+    r = await api.create_order('btc_idr', 'buy', '500000000', '50000')
     print(r)
     oid = r['order_id']
     print(await api.order_info('btc_idr', oid))
     print(await api.cancel_order('btc_idr', oid, 'buy'))
+
+    # r = await api.create_order('btc_idr', 'sell', '2000000000', '0.00045')
+    # print(r)
+    # oid = r['order_id']
+    # print(await api.order_info('btc_idr', oid))
+    # print(await api.cancel_order('btc_idr', oid, 'sell'))
+    #
+    # r = await api.create_order('btc_idr', 'buy', '5000000', '50000')
+    # print(r)
+    # oid = r['order_id']
+    # print(await api.order_info('btc_idr', oid))
+    # print(await api.cancel_order('btc_idr', oid, 'buy'))
 
     await api.stop()
 

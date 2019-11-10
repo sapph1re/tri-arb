@@ -84,6 +84,8 @@ class IndodaxExchange(BaseExchange):
             r = await self._api.order_info(symbol, order_id, urgency=1)
             r = await self._api.cancel_order(symbol, order_id, r['order']['type'], urgency=1)
             r = await self._api.order_info(symbol, order_id, urgency=1)
+        except IndodaxAPI.OrderNotFound:
+            raise IndodaxExchange.OrderNotFound
         except IndodaxAPI.Error as e:
             raise self.Error(f'Cancel order failed: {e.message}')
         return self._parse_order_result(symbol, r)

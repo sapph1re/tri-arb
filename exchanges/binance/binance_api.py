@@ -1,43 +1,26 @@
 import time
 import asyncio
 from typing import List, Tuple
+from exchanges.base_api import BaseAPI
 from .binance.client import AsyncClient
 from .binance.exceptions import BinanceAPIException
 from logger import get_logger
 logger = get_logger(__name__)
 
 
-class BinanceAPI:
-
-    class Error(BaseException):
-        def __init__(self, message):
-            self.message = message
+class BinanceAPI(BaseAPI):
 
     def __init__(self, client: AsyncClient):
+        super().__init__()
         self._client = client
+        self._request_interval = 0  # because binance takes care of its rate limit automatically
 
     @classmethod
     async def create(cls, api_key: str, api_secret: str):
         client = await AsyncClient.create(api_key, api_secret)
         return cls(client)
 
-    async def safe_call(self, func, *args, **kwargs):
-        tries = 10
-        try:
-            while 1:
-                try:
-                    return await func(*args, **kwargs)
-                except BaseException as e:
-                    logger.warning(f'API call failed: {args} {kwargs}. Reason: {e}')
-                    tries -= 1
-                    if tries > 0:
-                        continue
-                    else:
-                        raise
-        except (asyncio.TimeoutError, BinanceAPIException):
-            raise self.Error('Failed 10 times')
-
-    async def time(self) -> dict:
+    async def time(self, urgency: int = 0) -> dict:
         """
         Получение времени биржи - /api/v1/time
 
@@ -45,11 +28,9 @@ class BinanceAPI:
 
         :return: словарь с текущим временем.
         """
-        return await self.safe_call(
-            self._client.get_server_time
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.get_server_time)
 
-    async def exchange_info(self) -> dict:
+    async def exchange_info(self, urgency: int = 0) -> dict:
         """
         Настройки и лимиты биржи - /api/v1/exchangeInfo
 
@@ -57,11 +38,9 @@ class BinanceAPI:
 
         :return: структура данных в словаре
         """
-        return await self.safe_call(
-            self._client.get_exchange_info
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.get_exchange_info)
 
-    async def depth(self, symbol: str, limit: int = 100) -> dict:
+    async def depth(self, symbol: str, limit: int = 100, urgency: int = 0) -> dict:
         """
         Открытые ордера на бирже - /api/v1/depth
         Метод позволяет получить книгу ордеров.
@@ -79,7 +58,9 @@ class BinanceAPI:
 
         :return: значения в словаре
         """
-        return await self.safe_call(
+        return await self._safe_call(
+            urgency,
+            self._handle_errors,
             self._client.get_order_book,
             symbol=symbol.upper(),
             limit=limit
@@ -88,7 +69,7 @@ class BinanceAPI:
     async def create_order(self, symbol: str, side: str, order_type: str, quantity,
                            time_in_force: str = None, price=None, new_client_order_id: str = None,
                            stop_price=None, iceberg_qty=None, recv_window: int = None,
-                           new_order_resp_type: str = None) -> dict:
+                           new_order_resp_type: str = None, urgency: int = 0) -> dict:
         """
         Создание ордера - /api/v3/order
 
@@ -167,15 +148,12 @@ class BinanceAPI:
             kwargs['recvWindow'] = recv_window
         if new_order_resp_type:
             kwargs['newOrderRespType'] = new_order_resp_type
-        return await self.safe_call(
-            self._client.create_order,
-            **kwargs
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.create_order, **kwargs)
 
     async def test_order(self, symbol: str, side: str, order_type: str, quantity,
                          time_in_force: str = None, price=None, new_client_order_id: str = None,
                          stop_price=None, iceberg_qty=None, recv_window: int = None,
-                         new_order_resp_type: str = None) -> dict:
+                         new_order_resp_type: str = None, urgency: int = 0) -> dict:
         """
         Тестирование создания ордера: /api/v3/order/test
         Метод позволяет протестировать создание ордера – например, проверить, правильно ли настроены временные рамки. По факту такой ордер никогда не будет исполнен, и средства на его создание затрачены не будут.
@@ -232,13 +210,10 @@ class BinanceAPI:
             kwargs['recvWindow'] = recv_window
         if new_order_resp_type:
             kwargs['newOrderRespType'] = new_order_resp_type
-        return await self.safe_call(
-            self._client.create_test_order,
-            **kwargs
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.create_test_order, **kwargs)
 
     async def order_info(self, symbol: str, order_id: int = None, orig_client_order_id: str = None,
-                         recv_window: int = None) -> dict:
+                         recv_window: int = None, urgency: int = 0) -> dict:
         """
         Получить информацию по созданному ордеру.
 
@@ -264,14 +239,11 @@ class BinanceAPI:
             kwargs['origClientOrderId'] = orig_client_order_id
         if recv_window:
             kwargs['recvWindow'] = recv_window
-        return await self.safe_call(
-            self._client.get_order,
-            **kwargs
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.get_order, **kwargs)
 
     async def cancel_order(self, symbol: str, order_id: int = None,
                            orig_client_order_id: str = None, new_client_order_id: str = None,
-                           recv_window: int = None) -> dict:
+                           recv_window: int = None, urgency: int = 0) -> dict:
         """
         Отмена ордера - /api/v3/order
 
@@ -300,12 +272,9 @@ class BinanceAPI:
             kwargs['recvWindow'] = recv_window
         if new_client_order_id:
             kwargs['newClientOrderId'] = new_client_order_id
-        return await self.safe_call(
-            self._client.cancel_order,
-            **kwargs
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.cancel_order, **kwargs)
 
-    async def account(self, recv_window: int = None) -> dict:
+    async def account(self, recv_window: int = None, urgency: int = 0) -> dict:
         """
         Информация по аккаунту - /api/v3/account
 
@@ -323,12 +292,9 @@ class BinanceAPI:
         kwargs = {}
         if recv_window:
             kwargs['recvWindow'] = recv_window
-        return await self.safe_call(
-            self._client.get_account,
-            **kwargs
-        )
+        return await self._safe_call(urgency, self._handle_errors, self._client.get_account, **kwargs)
 
-    async def get_symbols_info(self) -> List[dict]:
+    async def get_symbols_info(self, urgency: int = 0) -> List[dict]:
         """
         :return: list of dictionaries with symbols info:
         {
@@ -367,9 +333,7 @@ class BinanceAPI:
             ]
         }
         """
-        response_json = await self.safe_call(
-            self.exchange_info
-        )
+        response_json = await self._safe_call(urgency, self._handle_errors, self.exchange_info)
         try:
             symbols_info = response_json['symbols']
         except LookupError:
@@ -391,6 +355,15 @@ class BinanceAPI:
         t = time.time()
         await self._client.get_account()
         return int((time.time() - t)*1000)
+
+    @staticmethod
+    async def _handle_errors(func, *args, **kwargs):
+        try:
+            return await func(*args, kwargs)
+        except BinanceAPIException as e:
+            if 'Unknown order sent' in e.message:
+                raise BaseAPI.OrderNotFound
+            raise BaseAPI.Error(e.message)
 
 
 async def main():

@@ -122,7 +122,7 @@ class PoloniexAPI(BaseAPI):
                     return r
         except PoloniexAPI.Error as e:
             if 'Order not found' in e.message:
-                raise PoloniexAPI.ErrorNoRetry(e.message)
+                raise PoloniexAPI.OrderNotFound
             if 'Not enough' in e.message:
                 raise PoloniexAPI.ErrorNoRetry(e.message)
             if 'Total must be at least' in e.message:

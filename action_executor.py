@@ -566,21 +566,20 @@ class ActionExecutor:
             amount_filled = Decimal(0)
             try:
                 cancel_res = await self._exchange.cancel_order(ores.symbol, ores.order_id)
-            except BaseExchange.Error as e:
-                if 'Unknown order sent' in e.message:
-                    logger.info(f'Order {ores.symbol}:{ores.order_id} not found, already completed?')
-                    # check if order is already completed
-                    try:
-                        r = await self._exchange.get_order_result(ores.symbol, ores.order_id)
-                    except BaseExchange.Error as e:
-                        logger.error(f'Checking failed-to-cancel order status failed: {e.message}')
-                    else:
-                        if r.status == 'FILLED':
-                            amount_filled = r.amount_executed
-                        else:
-                            logger.error(f'Unexpected failed-to-cancel order status: {r.status}')
+            except BaseExchange.OrderNotFound:
+                logger.info(f'Order {ores.symbol}:{ores.order_id} not found, already completed?')
+                # check if order is already completed
+                try:
+                    r = await self._exchange.get_order_result(ores.symbol, ores.order_id)
+                except BaseExchange.Error as e:
+                    logger.error(f'Checking failed-to-cancel order status failed: {e.message}')
                 else:
-                    logger.error(f'Order cancellation failed: {e.message}')
+                    if r.status == 'FILLED':
+                        amount_filled = r.amount_executed
+                    else:
+                        logger.error(f'Unexpected failed-to-cancel order status: {r.status}')
+            except BaseExchange.Error as e:
+                logger.error(f'Order cancellation failed: {e.message}')
             else:
                 amount_filled = cancel_res.amount_executed
                 logger.info(f'Order cancelled, executed amount: {amount_filled:f}')

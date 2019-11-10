@@ -205,6 +205,8 @@ class PoloniexExchange(BaseExchange):
     async def cancel_order(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
             r = await self._api.cancel_order(order_id, urgency=1)
+        except PoloniexAPI.OrderNotFound:
+            raise PoloniexExchange.OrderNotFound
         except PoloniexAPI.Error as e:
             raise PoloniexExchange.Error(f'Failed to cancel order: {e.message}')
         else:

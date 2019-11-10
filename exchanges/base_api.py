@@ -7,10 +7,13 @@ logger = get_logger(__name__)
 class BaseAPI:
 
     class Error(BaseException):
-        def __init__(self, message):
+        def __init__(self, message: str = ''):
             self.message = message
 
     class ErrorNoRetry(Error):
+        pass
+
+    class OrderNotFound(ErrorNoRetry):
         pass
 
     class Stopping(BaseException):
