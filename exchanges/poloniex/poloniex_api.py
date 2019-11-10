@@ -103,7 +103,7 @@ class PoloniexAPI(BaseAPI):
 
     async def _handle_response(self, response: aiohttp.ClientResponse) -> dict:
         if not str(response.status).startswith('2'):
-            raise self.Error(await response.text())
+            raise PoloniexAPI.Error(await response.text())
         try:
             r = await response.json()
         except ValueError:
