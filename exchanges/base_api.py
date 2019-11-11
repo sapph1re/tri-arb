@@ -48,8 +48,8 @@ class BaseAPI:
                         continue
                     else:
                         raise
-        except BaseAPI.ErrorNoRetry as e:
-            raise BaseAPI.Error(e.message)
+        except BaseAPI.ErrorNoRetry:
+            raise
         except BaseAPI.Stopping:
             raise BaseAPI.Error('API is stopping')
         except (asyncio.TimeoutError, BaseAPI.Error):

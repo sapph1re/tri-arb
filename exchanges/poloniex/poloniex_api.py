@@ -102,8 +102,6 @@ class PoloniexAPI(BaseAPI):
         return result
 
     async def _handle_response(self, response: aiohttp.ClientResponse) -> dict:
-        if not str(response.status).startswith('2'):
-            raise PoloniexAPI.Error(await response.text())
         try:
             r = await response.json()
         except ValueError:
@@ -122,7 +120,7 @@ class PoloniexAPI(BaseAPI):
                     return r
         except PoloniexAPI.Error as e:
             if 'Order not found' in e.message or 'is either completed or does not exist' in e.message:
-                raise PoloniexAPI.OrderNotFound
+                raise BaseAPI.OrderNotFound
             if 'Not enough' in e.message:
                 raise PoloniexAPI.ErrorNoRetry(e.message)
             if 'Total must be at least' in e.message:

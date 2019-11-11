@@ -3,6 +3,7 @@ from typing import Dict, Tuple
 from helpers import LRUDict
 from exchanges.base_exchange import BaseExchange
 from exchanges.base_orderbook import BaseOrderbook
+from exchanges.base_api import BaseAPI
 from .poloniex_api import PoloniexAPI
 from .poloniex_orderbook import PoloniexOrderbook
 from .poloniex_websocket import PoloniexWebsocket
@@ -115,11 +116,11 @@ class PoloniexExchange(BaseExchange):
     async def get_order_result(self, symbol: str, order_id: str) -> BaseExchange.OrderResult:
         try:
             r = await self._api.order_status(order_id, urgency=1)
-        except PoloniexAPI.OrderNotFound:
+        except BaseAPI.OrderNotFound:
             # order is filled or cancelled
             try:
                 r = await self._api.order_trades(order_id, urgency=1)
-            except PoloniexAPI.OrderNotFound:
+            except BaseAPI.OrderNotFound:
                 # order cancelled unfilled
                 try:
                     return BaseExchange.OrderResult(
