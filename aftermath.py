@@ -5,7 +5,7 @@ from pydispatch import dispatcher
 from config import config
 from exchanges.base_exchange import BaseExchange
 from action_executor import ActionExecutor, Action
-from database import DBArbResult
+from database import db, DBArbResult
 from logger import get_logger
 logger = get_logger(__name__)
 
@@ -86,5 +86,6 @@ class Aftermath:
             done_3_in = self._result.timings['orders_done'][2],
             completed_in = self._result.timings['completed']
         )
+        db.close()
 
         dispatcher.send(signal='aftermath_done', sender=self)

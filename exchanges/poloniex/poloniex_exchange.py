@@ -250,7 +250,7 @@ class PoloniexExchange(BaseExchange):
                 min_amount = (min_total / last_price).quantize(amount_step, rounding=ROUND_UP)
             except DivisionByZero:
                 # if last price is empty, skip it
-                logger.info(f'Failed to load {symbol} info, last price is empty')
+                # logger.info(f'Failed to load {symbol} info, last price is empty')
                 continue
             max_amount = Decimal('Inf')
             self._symbols_info[symbol] = {
