@@ -27,6 +27,7 @@ class TriangularArbitrage:
         )
         self._executor = None
         self._aftermath_done = asyncio.Event()
+        self._were_not_normal = 0   # counter for the circuit breaker
         dispatcher.connect(self._process_arbitrage, signal='arbitrage_detected', sender=self._detector)
 
     @classmethod
@@ -66,6 +67,15 @@ class TriangularArbitrage:
         dispatcher.connect(self._on_aftermath_done, signal='aftermath_done', sender=aftermath)
         asyncio.ensure_future(aftermath.run())
         self._executor = None
+        # circuit breaker
+        if result.scenario == 'normal':
+            self._were_not_normal = 0
+        else:
+            self._were_not_normal += 1
+            if self._were_not_normal >= config.getint('CircuitBreaker', 'NoNormalsInARow'):
+                logger.warning(f'{self._were_not_normal} arbs were not completed normally, stopping...')
+                asyncio.ensure_future(self.stop())
+
 
     def _process_arbitrage(self, arb: Arbitrage):
         if self._is_processing:
