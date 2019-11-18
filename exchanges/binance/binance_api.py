@@ -359,7 +359,7 @@ class BinanceAPI(BaseAPI):
     @staticmethod
     async def _handle_errors(func, *args, **kwargs):
         try:
-            return await func(*args, kwargs)
+            return await func(*args, **kwargs)
         except BinanceAPIException as e:
             if 'Unknown order sent' in e.message:
                 raise BaseAPI.OrderNotFound
