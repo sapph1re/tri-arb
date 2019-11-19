@@ -333,7 +333,7 @@ class BinanceAPI(BaseAPI):
             ]
         }
         """
-        response_json = await self._safe_call(urgency, self._handle_errors, self.exchange_info)
+        response_json = await self.exchange_info()
         try:
             symbols_info = response_json['symbols']
         except LookupError:
