@@ -423,7 +423,6 @@ class ArbitrageDetector:
             z_got_min = amounts_new['y'] * prices[yz] * (1 - self._fee)
             z_spend_max = amounts_new['x_buy'] * prices[xz]
             if z_got_min < z_spend_max:
-                logger.info(f'Z: {z_got_min} < {z_spend_max}')
                 return None
         elif direction == 'buy sell buy':
             amounts_new = self._normalize_amounts(amounts, {'y': yz, 'x_sell': xz, 'x_buy': xy}, prices)
@@ -456,7 +455,6 @@ class ArbitrageDetector:
             z_got_min = amounts_new['x_sell'] * prices[xz] * (1 - self._fee)
             z_spend_max = amounts_new['y'] * prices[yz]
             if z_got_min < z_spend_max:
-                logger.info(f'Z: {z_got_min} < {z_spend_max}')
                 return None
         else:
             logger.warning(f'Bad direction: {direction}')
