@@ -63,6 +63,9 @@ class TriangularArbitrage:
         self._is_processing = False
         actions = sender.get_raw_action_list()
         result = sender.get_result()
+        if result is None:
+            logger.info('No result, no aftermath')
+            return
         aftermath = Aftermath(self._exchange, actions, result)
         dispatcher.connect(self._on_aftermath_done, signal='aftermath_done', sender=aftermath)
         asyncio.ensure_future(aftermath.run())
