@@ -81,6 +81,7 @@ class ActionExecutor:
         self._min_fill_time = config.getint('Arbitrage', 'MinFillTime')
         self._min_fill_time_last = config.getint('Arbitrage', 'MinFillTimeLast')
         self._max_fill_time = config.getint('Arbitrage', 'MaxFillTime')
+        self._min_parallel_actions = config.getint('Arbitrage', 'MinParallelActions')
         self._result = None
         self._orders_executed = []
         self._action_orders = []
@@ -392,6 +393,8 @@ class ActionExecutor:
         if red_actions is not None:
             # instant 3/3 available, we'll execute all three actions in parallel
             return ActionSet([red_actions,])
+        if self._min_parallel_actions == 3:
+            raise self.Error('No available balance for 3 parallel actions')
         # availability 2/3:
         red_actions = self._reduce_actions_by_proportion(actions, prop_mid)
         if red_actions is not None:
@@ -400,6 +403,8 @@ class ActionExecutor:
                 [red_actions[idx_mid], red_actions[idx_max]],
                 [red_actions[idx_min],]
             ])
+        if self._min_parallel_actions == 2:
+            raise self.Error('No available balance for 2 or 3 parallel actions')
         # availability 1/3:
         red_actions = self._reduce_actions_by_proportion(actions, prop_max)
         if red_actions is not None:
