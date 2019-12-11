@@ -27,6 +27,9 @@ class DBArbResult(BaseModel):
     parallels = pw.IntegerField()
     # scenario: failed, unfilled, reverted N, finalized, normal
     scenario = pw.CharField()
+    # total profit equivalent
+    profit_eq = pw.DecimalField(max_digits=20, decimal_places=8, auto_round=True)
+    profit_asset = pw.CharField()
     # A, B, C are the currencies of the triangle (in the order as specified above)
     profit_a = pw.DecimalField(max_digits=20, decimal_places=8, auto_round=True)
     profit_b = pw.DecimalField(max_digits=20, decimal_places=8, auto_round=True)

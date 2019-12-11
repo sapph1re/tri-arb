@@ -115,6 +115,8 @@ class Aftermath:
             triangle = triangle,
             parallels = self._result.parallels,
             scenario = self._result.scenario,
+            profit_eq = total_eq,
+            profit_asset = eq_asset,
             profit_a = profits[assets[0]],
             profit_b = profits[assets[1]],
             profit_c = profits[assets[2]],
