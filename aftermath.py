@@ -31,6 +31,7 @@ class Aftermath:
         assets = sorted(assets)
         triangle = ', '.join(assets)
 
+        # calculating actual profits in every asset
         profits = {
             assets[0]: Decimal(0),  # profit A
             assets[1]: Decimal(0),  # profit B
@@ -65,6 +66,49 @@ class Aftermath:
                     fillings[idx] = float(ores.amount_executed / ores.amount_original)
                 elif ores.status == 'FILLED':
                     fillings[idx] = 1.0
+
+        # total profit equivalent
+        total_eq = Decimal(0)
+        eq_asset = config.get('Aftermath', 'ProfitEqAsset')
+        symbols = self._exchange.get_symbols_info()
+        for asset, profit in profits.items():
+            if asset == eq_asset:
+                total_eq += profit
+            else:
+                symbol = self._exchange.make_symbol(asset, eq_asset)
+                bolsym = self._exchange.make_symbol(eq_asset, asset)
+                if symbol in symbols:
+                    price = self._exchange.get_orderbook(symbol).get_best_bid()
+                    total_eq += profit * price
+                elif bolsym in symbols:
+                    price = self._exchange.get_orderbook(bolsym).get_best_ask()
+                    total_eq += profit / price
+                else:
+                    for asset2 in assets:
+                        symbol1 = self._exchange.make_symbol(asset, asset2)
+                        bolsym1 = self._exchange.make_symbol(asset2, asset)
+                        if symbol1 in symbols:
+                            price1 = self._exchange.get_orderbook(symbol1).get_best_bid()
+                            profit_eq_asset2 = profit * price1
+                        elif bolsym1 in symbols:
+                            price1 = self._exchange.get_orderbook(symbol1).get_best_ask()
+                            profit_eq_asset2 = profit / price1
+                        else:
+                            continue
+                        symbol2 = self._exchange.make_symbol(asset2, eq_asset)
+                        bolsym2 = self._exchange.make_symbol(eq_asset, asset2)
+                        if symbol2 in symbols:
+                            price2 = self._exchange.get_orderbook(symbol2).get_best_bid()
+                            total_eq += profit_eq_asset2 * price2
+                            break
+                        elif bolsym2 in symbols:
+                            price2 = self._exchange.get_orderbook(bolsym2).get_best_ask()
+                            total_eq += profit_eq_asset2 / price2
+                            break
+                        else:
+                            continue
+                    else:
+                        logger.error(f'Total profit equivalent calculation failed, pair not found for {asset}')
 
         DBArbResult.create(
             dt = datetime.utcnow(),

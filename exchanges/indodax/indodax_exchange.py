@@ -13,7 +13,6 @@ class IndodaxExchange(BaseExchange):
         super().__init__()
         self._api = api
         self._symbols_info = {}
-        self._orderbooks = {}
 
     @classmethod
     async def create(cls, api_key: str, api_secret: str):

@@ -44,7 +44,7 @@ class BinanceExchange(BaseExchange):
         return base + quote
 
     def run_orderbooks(self, symbols: Dict[str, dict]) -> Dict[str, BaseOrderbook]:
-        orderbooks = {}
+        self._orderbooks = {}
         i = 999
         ws = None
         for symbol, details in symbols.items():
@@ -55,11 +55,11 @@ class BinanceExchange(BaseExchange):
                 i = 0
             # starting an orderbook watcher for every symbol
             ob = BinanceOrderbook(symbol=symbol, websocket=ws)
-            orderbooks[symbol] = ob
+            self._orderbooks[symbol] = ob
             i += 1
         for ws in self._websockets:
             ws.start()
-        return orderbooks
+        return self._orderbooks
 
     async def create_order(self, symbol: str, side: str, order_type: str, amount: Decimal,
                            price: Decimal or None = None) -> BaseExchange.OrderResult:

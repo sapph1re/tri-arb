@@ -28,7 +28,8 @@ class BaseExchange:
         pass
 
     def __init__(self):
-        pass
+        # this must be maintained by implementation
+        self._orderbooks = {}
 
     @classmethod
     async def create(cls, api_key: str, api_secret: str):
@@ -53,22 +54,28 @@ class BaseExchange:
     def run_orderbooks(self, symbols: Dict[str, dict]) -> Dict[str, BaseOrderbook]:
         return {}
 
+    def get_orderbook(self, symbol: str) -> BaseOrderbook:
+        try:
+            return self._orderbooks[symbol]
+        except KeyError:
+            raise BaseExchange.Error(f'Orderbook not found: {symbol}')
+
     async def create_order(self, symbol: str, side: str, order_type: str,
                            amount: Decimal, price: Decimal or None = None) -> OrderResult:
         # must return BaseExchange.OrderResult or raise BaseExchange.Error
-        raise self.Error('Not implemented')
+        raise BaseExchange.Error('Not implemented')
 
     async def get_order_result(self, symbol: str, order_id: str) -> OrderResult:
         # must return BaseExchange.OrderResult or raise BaseExchange.Error
-        raise self.Error('Not implemented')
+        raise BaseExchange.Error('Not implemented')
 
     async def cancel_order(self, symbol: str, order_id: str) -> OrderResult:
         # must return BaseExchange.OrderResult or raise BaseExchange.Error
-        raise self.Error('Not implemented')
+        raise BaseExchange.Error('Not implemented')
 
     async def measure_ping(self) -> Tuple[int, int, int]:
         # must return min, max, avg ping in milliseconds or raise BaseExchange.Error
-        raise self.Error('Not implemented')
+        raise BaseExchange.Error('Not implemented')
 
     async def stop(self):
         # graceful stop, if needed

@@ -17,7 +17,6 @@ class PoloniexExchange(BaseExchange):
         self._api = api
         self._symbols_info = {}
         self._websockets = []
-        self._orderbooks = {}
         # we store orders info {order_id: {side, price, amount}} because Poloniex API is limited on this
         # max size of this storage is limited to keep memory usage reasonable
         # at its max size, least-recently-used entry is removed when a new one is added
