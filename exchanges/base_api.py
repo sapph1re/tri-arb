@@ -28,6 +28,7 @@ class BaseAPI:
             2: asyncio.Lock()
         }
         self._request_interval = 1      # seconds
+        self._calls_active = {0: 0, 1: 0, 2: 0}
 
     async def _safe_call(self, urgency: int, func, *args, **kwargs):
         # prioritizes, throttles, retries on error
@@ -56,6 +57,9 @@ class BaseAPI:
             raise BaseAPI.Error('Failed 10 times')
 
     async def _prioritize(self, urgency: int, func, *args, **kwargs):
+        self._calls_active[urgency] += 1
+        if self._calls_active[urgency] >= 10:
+            logger.warning(f'Too many parallel API calls are waiting: {self._calls_active}')
         # give way to more urgent ones
         for level in sorted(self._priority_locks.keys()):
             if level >= urgency:
@@ -71,6 +75,7 @@ class BaseAPI:
             for level in sorted(self._priority_locks.keys()):
                 if level >= urgency:
                     self._priority_locks[level].release()
+            self._calls_active[urgency] -= 1
         return result
 
     async def _throttle(self, func, *args, **kwargs):
