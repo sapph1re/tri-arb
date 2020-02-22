@@ -241,6 +241,8 @@ class PoloniexExchange(BaseExchange):
                 min_total = Decimal('1.0')
             elif quote == 'ETH':
                 min_total = Decimal('0.0001')
+            elif quote == 'TRX':
+                min_total = Decimal('100.0')
             else:
                 logger.error(f'Unsupported quote asset: {quote}')
                 return
